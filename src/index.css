@@ -1,0 +1,171 @@
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@300;400;500;600&family=Inter:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer base {
+  :root {
+    --background: 214 50% 4%;
+    --foreground: 210 40% 92%;
+
+    --card: 215 40% 6%;
+    --card-foreground: 210 40% 92%;
+
+    --popover: 215 40% 6%;
+    --popover-foreground: 210 40% 92%;
+
+    --primary: 168 100% 42%;
+    --primary-foreground: 214 50% 4%;
+
+    --secondary: 215 25% 15%;
+    --secondary-foreground: 210 40% 85%;
+
+    --muted: 215 25% 12%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 35 100% 50%;
+    --accent-foreground: 214 50% 4%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 215 25% 15%;
+    --input: 215 25% 18%;
+    --ring: 168 100% 42%;
+
+    --radius: 0.75rem;
+
+    /* Custom tokens */
+    --cyan: 168 100% 42%;
+    --amber: 35 100% 50%;
+    --danger: 0 84% 60%;
+    --purple-aqi: 270 60% 40%;
+    --maroon-aqi: 0 50% 30%;
+    --yellow-aqi: 48 96% 53%;
+    --orange-aqi: 25 95% 53%;
+    --green-aqi: 168 100% 42%;
+
+    --glass-bg: 215 40% 6%;
+    --glass-border: 168 100% 42%;
+    --grid-line: 215 25% 15%;
+
+    --sidebar-background: 214 50% 5%;
+    --sidebar-foreground: 210 40% 85%;
+    --sidebar-primary: 168 100% 42%;
+    --sidebar-primary-foreground: 214 50% 4%;
+    --sidebar-accent: 215 25% 12%;
+    --sidebar-accent-foreground: 210 40% 85%;
+    --sidebar-border: 215 25% 15%;
+    --sidebar-ring: 168 100% 42%;
+
+    /* Font families */
+    --font-heading: 'Syne', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-body: 'Inter', sans-serif;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body;
+    font-family: var(--font-body);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    letter-spacing: -0.04em;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.2);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.4);
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-card/40 backdrop-blur-md rounded-xl;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.05);
+    border: 1px solid hsl(var(--glass-border) / 0.1);
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-200;
+  }
+  .glass-card-hover:hover {
+    border-color: hsl(var(--glass-border) / 0.25);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6), 0 0 15px hsl(var(--primary) / 0.1);
+  }
+
+  .font-heading {
+    font-family: var(--font-heading);
+    letter-spacing: -0.04em;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .font-body {
+    font-family: var(--font-body);
+  }
+
+  .grid-bg {
+    background-image: 
+      linear-gradient(to right, hsl(var(--grid-line) / 0.3) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--grid-line) / 0.3) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .text-cyan { color: hsl(var(--cyan)); }
+  .text-amber-alert { color: hsl(var(--amber)); }
+  .text-danger { color: hsl(var(--danger)); }
+  .bg-cyan { background-color: hsl(var(--cyan)); }
+
+  .aqi-good { color: hsl(var(--green-aqi)); }
+  .aqi-moderate { color: hsl(var(--yellow-aqi)); }
+  .aqi-unhealthy-sensitive { color: hsl(var(--orange-aqi)); }
+  .aqi-unhealthy { color: hsl(var(--danger)); }
+  .aqi-very-unhealthy { color: hsl(var(--purple-aqi)); }
+  .aqi-hazardous { color: hsl(var(--maroon-aqi)); }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.15); }
+  }
+  .animate-pulse-glow {
+    animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes scan-line {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  .animate-scan {
+    animation: scan-line 1.5s ease-in-out infinite;
+  }
+
+  @keyframes ticker-scroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  .animate-ticker {
+    animation: ticker-scroll 30s linear infinite;
+  }
+}
