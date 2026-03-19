@@ -7,7 +7,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart,
 } from 'recharts';
 import { Brain, AlertTriangle, Shield, Loader2, ChevronRight, Zap, MapPin, Navigation } from 'lucide-react';
-import { LiveDashboard } from '@/components/LiveDashboard';
+
 
 interface PredictionPoint { time: string; aqi: number; upper: number; lower: number; }
 
@@ -305,7 +305,7 @@ const Predict = () => {
           const bd = Math.hypot(best.lat - latitude, best.lng - longitude);
           return d < bd ? s : best;
         }, stations[0]);
-        const blendedAqi = Math.round((nearest.aqi + cityAQI) / 2);
+        const blendedAqi = nearest.aqi;
         setLocAqi(blendedAqi);
         setLocLabel(`My Location (near ${nearest.name})`);
         setLocCoords([latitude, longitude]);
@@ -707,7 +707,7 @@ const Predict = () => {
           </motion.div>
         )}
 
-        <LiveDashboard />
+        
       </motion.div>
     </>
   );

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useAirQuality } from '@/context/AirQualityContext';
-import { getAQICategory, getAQIColor, hourlyAQIData } from '@/data/mockSensorData';
+import { getAQICategory, getAQIColor } from '@/data/mockSensorData';
 import {
   Heart, Download, TrendingUp, Send,
   Bot, User, Sparkles, Wind,
@@ -14,15 +14,61 @@ interface ChatMessage {
   content: string;
 }
 
+interface AQIChartPoint {
+  hour: string;
+  aqi: number;
+}
+
 // ── Quick prompts ──────────────────────────────────────────────
 const QUICK_PROMPTS = [
   "Is it safe to go for a run today?",
-  "What was AQI like last night?",
-  "Will air quality improve tonight?",
+  "What was AQI like yesterday?",
+  "What will be the AQI tomorrow?",
   "What mask should I wear outside?",
   "Best time to open windows today?",
   "Should I use an air purifier?",
 ];
+
+// ── Fetch past 24 hours of us_aqi from Open-Meteo ─────────────
+// forecast_days=2 gives 48h from today midnight
+// timezone=auto returns times in local timezone
+// we find the last entry <= current hour and slice back 24
+async function fetchPast24Hours(lat: number, lon: number): Promise<AQIChartPoint[]> {
+  const now       = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+  const res = await fetch(
+    `https://air-quality-api.open-meteo.com/v1/air-quality` +
+    `?latitude=${lat}&longitude=${lon}` +
+    `&hourly=us_aqi` +
+    `&start_date=${fmt(yesterday)}` +
+    `&end_date=${fmt(now)}` +
+    `&timezone=auto` +
+    `&domains=cams_global`
+  );
+  if (!res.ok) throw new Error(`Open-Meteo fetch failed: ${res.status}`);
+  const data  = await res.json();
+  const times: string[] = data.hourly?.time   ?? [];
+  const aqis:  number[] = data.hourly?.us_aqi ?? [];
+
+  now.setMinutes(0, 0, 0);
+
+  let nowIdx = -1;
+  for (let i = times.length - 1; i >= 0; i--) {
+    if (new Date(times[i]) <= now) { nowIdx = i; break; }
+  }
+
+  const endIdx   = nowIdx >= 0 ? nowIdx + 1 : times.length;
+  const startIdx = Math.max(0, endIdx - 24);
+
+  return times.slice(startIdx, endIdx).map((t, i) => ({
+    hour: `${new Date(t).getHours().toString().padStart(2, '0')}:00`,
+    aqi:  aqis[startIdx + i] ?? 0,
+  }));
+}
 
 // ── Chat bubble ────────────────────────────────────────────────
 const ChatBubble = ({ msg }: { msg: ChatMessage }) => {
@@ -79,53 +125,68 @@ const TypingIndicator = () => (
   </div>
 );
 
-// ── AQI Chart ──────────────────────────────────────────────────
-const AQIChart = ({ cityName }: { cityName: string }) => {
+// ── AQI Chart — past 24h, current hour at far right ───────────
+const AQIChart = ({ cityName, chartData, currentAQI }: {
+  cityName: string;
+  chartData: AQIChartPoint[];
+  currentAQI: number;
+}) => {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
+  const data: AQIChartPoint[] = chartData.length > 0
+    ? chartData
+    : Array.from({ length: 24 }, (_, i) => ({
+        hour: `${i.toString().padStart(2, '0')}:00`,
+        aqi: currentAQI,
+      }));
+
   const W = 800, H = 180, padL = 36, padR = 60, padT = 16, padB = 32;
   const cW = W - padL - padR, cH = H - padT - padB;
-  const vals = hourlyAQIData.map(d => d.aqi);
-  const minV = Math.min(...vals) - 20, maxV = Math.max(...vals) + 20;
-  const x = (i: number) => padL + (i / (vals.length - 1)) * cW;
-  const y = (v: number) => padT + cH - ((v - minV) / (maxV - minV)) * cH;
+  const vals = data.map(d => d.aqi);
+  const minV = Math.max(0, Math.min(...vals) - 20);
+  const maxV = Math.max(...vals) + 20;
+  const x = (i: number) => padL + (i / Math.max(vals.length - 1, 1)) * cW;
+  const y = (v: number) => padT + cH - ((v - minV) / Math.max(maxV - minV, 1)) * cH;
+
   const area = vals.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
     + ` L${x(vals.length - 1).toFixed(1)},${(padT + cH).toFixed(1)} L${x(0).toFixed(1)},${(padT + cH).toFixed(1)} Z`;
   const line = vals.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  const now = new Date().getHours();
+
+  // Current hour is always the last point
+  const nowIdx = data.length - 1;
+
   const thresholds = [{ v: 50, label: 'Good' }, { v: 100, label: 'Moderate' }, { v: 150, label: 'Unhealthy' }];
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
     if (!svg) return;
-    const rect = svg.getBoundingClientRect();
+    const rect   = svg.getBoundingClientRect();
     const scaleX = W / rect.width;
     const mouseX = (e.clientX - rect.left) * scaleX;
-    const relX = mouseX - padL;
-    const idx = Math.round((relX / cW) * (vals.length - 1));
+    const relX   = mouseX - padL;
+    const idx    = Math.round((relX / cW) * (vals.length - 1));
     if (idx >= 0 && idx < vals.length) setHoverIdx(idx);
   };
 
-  const hi = hoverIdx ?? now;
-  const hX = x(hi);
-  const hY = y(vals[hi]);
-  const hColor = getAQIColor(vals[hi]);
+  const hi       = hoverIdx ?? nowIdx;
+  const hX       = x(hi);
+  const hY       = y(vals[hi]);
+  const hColor   = getAQIColor(vals[hi]);
   const tooltipX = hX > W - padR - 80 ? hX - 90 : hX + 10;
+  const labelInterval = Math.max(1, Math.floor(data.length / 8));
 
   return (
     <div className="adv-card" style={{ borderRadius: 20, padding: '20px 24px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', marginBottom: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <TrendingUp size={15} style={{ color: '#00b38f' }} />
-          <span style={{ fontFamily: 'Syne, sans-serif', fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>24-Hour AQI Trend</span>
-          <span style={{ fontSize: 12, color: '#334155', marginLeft: 4 }}>Today · {cityName}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderRadius: 99, background: hColor + '15', border: `1px solid ${hColor}35` }}>
-          <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'IBM Plex Mono, monospace' }}>{hourlyAQIData[hi].hour}</span>
-          <span style={{ fontSize: 14, fontWeight: 700, color: hColor, fontFamily: 'IBM Plex Mono, monospace' }}>AQI {vals[hi]}</span>
-          <span style={{ fontSize: 11, color: hColor, fontFamily: 'IBM Plex Mono, monospace' }}>{getAQICategory(vals[hi]).label}</span>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <TrendingUp size={15} style={{ color: '#00b38f' }} />
+        <span style={{ fontFamily: 'Syne, sans-serif', fontSize: 15, fontWeight: 700, color: '#e2e8f0' }}>
+          Past 24-Hour AQI
+        </span>
+        <span style={{ fontSize: 12, color: '#334155', marginLeft: 4 }}>· {cityName}</span>
+        {chartData.length === 0 && (
+          <span style={{ fontSize: 12, color: '#475569', marginLeft: 8 }}>Loading…</span>
+        )}
       </div>
 
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
@@ -139,22 +200,58 @@ const AQIChart = ({ cityName }: { cityName: string }) => {
           <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
           <filter id="glowStrong"><feGaussianBlur stdDeviation="4" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
         </defs>
-        {thresholds.map(t => { const ty = y(t.v); if (ty < padT || ty > padT + cH) return null; return (<g key={t.v}><line x1={padL} y1={ty} x2={W - padR} y2={ty} stroke={getAQIColor(t.v)} strokeWidth="0.5" strokeDasharray="4 4" opacity="0.35" /><text x={W - padR + 4} y={ty + 4} fontSize="9" fill={getAQIColor(t.v)} opacity="0.6">{t.label}</text></g>); })}
-        {[minV, Math.round((minV + maxV) / 2), maxV].map(v => (<text key={v} x={padL - 6} y={y(v) + 4} fontSize="9" fill="#334155" textAnchor="end">{Math.round(v)}</text>))}
-        {hourlyAQIData.filter((_, i) => i % 3 === 0).map((d, i) => (<text key={i} x={x(i * 3)} y={H - 4} fontSize="9" fill={hi === i * 3 ? '#94a3b8' : '#334155'} textAnchor="middle" style={{ transition: 'fill 0.15s' }}>{d.hour}</text>))}
+
+        {thresholds.map(t => {
+          const ty = y(t.v);
+          if (ty < padT || ty > padT + cH) return null;
+          return (
+            <g key={t.v}>
+              <line x1={padL} y1={ty} x2={W - padR} y2={ty} stroke={getAQIColor(t.v)} strokeWidth="0.5" strokeDasharray="4 4" opacity="0.35" />
+              <text x={W - padR + 4} y={ty + 4} fontSize="9" fill={getAQIColor(t.v)} opacity="0.6">{t.label}</text>
+            </g>
+          );
+        })}
+
+        {[minV, Math.round((minV + maxV) / 2), maxV].map(v => (
+          <text key={v} x={padL - 6} y={y(v) + 4} fontSize="9" fill="#334155" textAnchor="end">{Math.round(v)}</text>
+        ))}
+
+        {data.filter((_, i) => i % labelInterval === 0).map((d, i) => (
+          <text key={i} x={x(i * labelInterval)} y={H - 4} fontSize="9"
+            fill={hi === i * labelInterval ? '#94a3b8' : '#334155'}
+            textAnchor="middle" style={{ transition: 'fill 0.15s' }}>
+            {d.hour}
+          </text>
+        ))}
+        {/* Always show NOW label at last point */}
+        <text x={x(data.length - 1)} y={H - 4} fontSize="9" fill="#00b38f" textAnchor="middle" fontWeight="700">
+          NOW
+        </text>
+
         <path d={area} fill="url(#aqiGrad)" />
         <path d={line} fill="none" stroke="#00d4aa" strokeWidth="2" strokeLinejoin="round" filter="url(#glow)" />
-        {vals.filter((_, i) => i % 3 === 0).map((v, i) => (<circle key={i} cx={x(i * 3)} cy={y(v)} r={hi === i * 3 ? 0 : 3} fill={getAQIColor(v)} stroke="rgba(6,8,14,0.8)" strokeWidth="1.5" />))}
-        {hoverIdx === null && (<g><line x1={x(now)} y1={padT} x2={x(now)} y2={padT + cH} stroke="#e2e8f0" strokeWidth="1" strokeDasharray="3 3" opacity="0.25" /><rect x={x(now) - 18} y={padT - 2} width="36" height="14" rx="4" fill="rgba(6,8,14,0.8)" stroke="rgba(255,255,255,0.08)" strokeWidth="0.5" /><text x={x(now)} y={padT + 8} fontSize="8" fill="#64748b" textAnchor="middle">NOW</text></g>)}
+
+        {vals.filter((_, i) => i % labelInterval === 0).map((v, i) => (
+          <circle key={i} cx={x(i * labelInterval)} cy={y(v)} r={hi === i * labelInterval ? 0 : 3}
+            fill={getAQIColor(v)} stroke="rgba(6,8,14,0.8)" strokeWidth="1.5" />
+        ))}
+
+        {/* NOW dot at last point */}
+        <circle cx={x(nowIdx)} cy={y(vals[nowIdx])} r="6" fill="#00b38f" stroke="rgba(6,8,14,0.9)" strokeWidth="2" filter="url(#glow)" />
+        <circle cx={x(nowIdx)} cy={y(vals[nowIdx])} r="10" fill="#00b38f" opacity="0.15" filter="url(#glowStrong)" />
+
+        {/* Hover crosshair */}
         <line x1={hX} y1={padT} x2={hX} y2={padT + cH} stroke={hColor} strokeWidth="1" strokeDasharray="4 3" opacity="0.6" style={{ transition: 'all 0.05s' }} />
         <circle cx={hX} cy={hY} r="10" fill={hColor} opacity="0.12" filter="url(#glowStrong)" style={{ transition: 'all 0.05s' }} />
         <circle cx={hX} cy={hY} r="6" fill="none" stroke={hColor} strokeWidth="1.5" opacity="0.5" style={{ transition: 'all 0.05s' }} />
         <circle cx={hX} cy={hY} r="4" fill={hColor} stroke="rgba(6,8,14,0.9)" strokeWidth="2" filter="url(#glow)" style={{ transition: 'all 0.05s' }} />
+
         <g style={{ transition: 'all 0.05s' }}>
           <rect x={tooltipX} y={hY - 28} width={80} height={22} rx="6" fill="rgba(6,8,14,0.92)" stroke={hColor} strokeWidth="0.8" opacity="0.95" />
-          <text x={tooltipX + 40} y={hY - 20} fontSize="9" fill="#64748b" textAnchor="middle" fontFamily="IBM Plex Mono, monospace">{hourlyAQIData[hi].hour}</text>
+          <text x={tooltipX + 40} y={hY - 20} fontSize="9" fill="#64748b" textAnchor="middle" fontFamily="IBM Plex Mono, monospace">{data[hi]?.hour}</text>
           <text x={tooltipX + 40} y={hY - 10} fontSize="10" fill={hColor} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontWeight="700">AQI {vals[hi]}</text>
         </g>
+
         <rect x={padL} y={padT} width={cW} height={cH} fill="transparent" />
       </svg>
 
@@ -172,50 +269,99 @@ const AQIChart = ({ cityName }: { cityName: string }) => {
 
 // ── Main Advisory ──────────────────────────────────────────────
 const Advisory = () => {
-  const { cityAQI, stations, alerts, cityName, owmAir, owmLoading } = useAirQuality();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const { liveAvgAQI, cityAQI, stations, alerts, cityName, owmAir, owmLoading, userCoords } = useAirQuality();
+  const [messages,    setMessages]    = useState<ChatMessage[]>([]);
+  const [input,       setInput]       = useState('');
+  const [loading,     setLoading]     = useState(false);
   const [chatStarted, setChatStarted] = useState(false);
+  const [extForecast, setExtForecast] = useState<{ hour: string; aqi: number; label: string }[]>([]);
+  const [chartData,   setChartData]   = useState<AQIChartPoint[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const owmCurrent = owmAir ? {
-    aqi: owmAir.currentAQI,
+  const OWM_LABEL = ['', 'Good', 'Fair', 'Moderate', 'Poor', 'Very Poor'];
+  const toRealAQI = (pm25: number) => Math.min(500, Math.round((pm25 / 250) * 500));
+
+  const activeAQI = liveAvgAQI || cityAQI;
+
+  // ── Fetch past 24h chart data ──────────────────────────────
+  useEffect(() => {
+    const [lat, lon] = userCoords;
+    if (!lat || !lon) return;
+    fetchPast24Hours(lat, lon)
+      .then(setChartData)
+      .catch(e => console.error('Chart fetch failed:', e));
+  }, [userCoords]);
+
+  // ── Fetch OWM extended forecast (chat context only) ────────
+  useEffect(() => {
+    const key = import.meta.env.VITE_OWM_API_KEY;
+    const [lat, lon] = userCoords;
+    if (!key || !lat || !lon) return;
+    fetch(`/owm/data/2.5/air_pollution/forecast?lat=${lat}&lon=${lon}&appid=${key}`)
+      .then(r => r.json())
+      .then(data => {
+        setExtForecast((data.list || []).map((item: any) => ({
+          hour:  new Date(item.dt * 1000).toLocaleString([], {
+            weekday: 'short', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          }),
+          aqi:   toRealAQI(item.components?.pm2_5 ?? 0),
+          label: OWM_LABEL[item.main.aqi] || 'Unknown',
+        })));
+      })
+      .catch(e => console.error('Extended forecast fetch failed:', e));
+  }, [userCoords]);
+
+  const owmCurrent  = owmAir ? {
+    aqi:   owmAir.currentAQI,
     label: owmAir.currentLabel,
     components: { pm2_5: owmAir.pm25, pm10: owmAir.pm10, o3: owmAir.o3, no2: owmAir.no2 },
   } : null;
   const owmPast     = owmAir?.past     ?? [];
   const owmForecast = owmAir?.forecast ?? [];
 
-  const displayName = (name: string) => !name || name === 'Current Location' ? cityName : name;
-  const localStations = stations.filter(s => !s.id.startsWith('init-'));
+  const displayName    = (name: string) => !name || name === 'Current Location' ? cityName : name;
+  const localStations  = stations.filter(s => !s.id.startsWith('init-'));
   const targetStations = localStations.length > 0 ? localStations : stations;
   const peakStation    = [...targetStations].sort((a, b) => b.aqi - a.aqi)[0] || { name: 'N/A', aqi: 0 };
   const lowestStation  = [...targetStations].sort((a, b) => a.aqi - b.aqi)[0] || { name: 'N/A', aqi: 0 };
-  const cat = getAQICategory(cityAQI);
+  const cat = getAQICategory(activeAQI);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
   const buildSystemPrompt = () => {
-    const pastSummary = owmPast.length > 0
-      ? owmPast.map(p => `  ${p.hour}: AQI ${p.aqi} (${p.label}), PM2.5 ${p.pm25}µg/m³`).join('\n')
-      : hourlyAQIData.slice(0, 8).map(d => `  ${d.hour}: AQI ${d.aqi}`).join('\n');
+    const now          = new Date();
+    const todayStr     = now.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const timeStr      = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const yesterdayStr = new Date(now.getTime() - 86400000).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    const tomorrowStr  = new Date(now.getTime() + 86400000).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 
-    const forecastSummary = owmForecast.length > 0
-      ? owmForecast.map(f => `  ${f.hour}: AQI ${f.aqi} (${f.label}), PM2.5 ${f.pm25}µg/m³`).join('\n')
+    const pastSummary = owmPast.length > 0
+      ? owmPast.filter((_: any, i: number) => i % 2 === 0).slice(-16)
+          .map(p => `  ${p.hour}: AQI ${p.aqi} (${p.label})`).join('\n')
+      : 'Not available';
+
+    const forecastToUse   = extForecast.length > 0 ? extForecast : owmForecast;
+    const forecastSummary = forecastToUse.length > 0
+      ? forecastToUse.filter((_: any, i: number) => i % 2 === 0).slice(0, 16)
+          .map(f => `  ${f.hour}: AQI ${f.aqi} (${f.label})`).join('\n')
       : 'Not available';
 
     const currentSummary = owmCurrent
-      ? `AQI ${owmCurrent.aqi} (${owmCurrent.label}) — PM2.5: ${owmCurrent.components.pm2_5.toFixed(1)}µg/m³, PM10: ${owmCurrent.components.pm10.toFixed(1)}µg/m³, O3: ${owmCurrent.components.o3.toFixed(1)}µg/m³, NO2: ${owmCurrent.components.no2.toFixed(1)}µg/m³`
-      : `AQI ${cityAQI} (${cat.label})`;
+      ? `AQI ${activeAQI} — PM2.5: ${owmCurrent.components.pm2_5.toFixed(1)}µg/m³, PM10: ${owmCurrent.components.pm10.toFixed(1)}µg/m³, O3: ${owmCurrent.components.o3.toFixed(1)}µg/m³, NO2: ${owmCurrent.components.no2.toFixed(1)}µg/m³`
+      : `AQI ${activeAQI} (${cat.label})`;
 
     return `
 You are AeroSense AI, a friendly and knowledgeable air quality health advisor.
 
 Location: ${cityName}
-Data source: OpenWeatherMap Air Pollution API (real-time)
+Current date: ${todayStr}
+Current time: ${timeStr}
+Yesterday was: ${yesterdayStr}
+Tomorrow is: ${tomorrowStr}
+Data source: Open-Meteo CAMS (real-time)
 
 CURRENT AIR QUALITY:
 ${currentSummary}
@@ -223,19 +369,22 @@ ${currentSummary}
 - Cleanest zone: ${displayName(lowestStation.name)} at AQI ${lowestStation.aqi}
 - Active alerts: ${alerts.length > 0 ? alerts.map(a => `${displayName(a.stationName)} AQI ${a.aqi}`).join(', ') : 'None'}
 
-PAST 24 HOURS (real data):
+PAST 2 DAYS (real data):
 ${pastSummary}
 
-FORECAST NEXT 24 HOURS (real data):
+FORECAST NEXT 2 DAYS (real data):
 ${forecastSummary}
 
 YOUR ROLE:
 - Answer questions about PAST, CURRENT, and FUTURE air quality using the real data above
+- When asked about "yesterday" → find entries in PAST data matching ${yesterdayStr} and summarize
+- When asked about "tomorrow" → find entries in FORECAST matching ${tomorrowStr} and summarize
 - When asked "what was AQI at X time" → look at PAST data and answer specifically
 - When asked "will it get better/worse" → look at FORECAST data and answer specifically
-- When asked "what's AQI now" → use CURRENT data
-- Give specific, actionable health advice based on the data
-- Be concise — 3-5 sentences max unless detail is needed
+- When asked "what's AQI now" → use CURRENT data (AQI ${activeAQI})
+- AQI values are on the 0-500 US scale — never say AQI 1 or AQI 2
+- Give specific actionable health advice based on the data
+- Be concise — 2-4 sentences max
 - Be warm, not clinical. Think "knowledgeable friend" not "medical pamphlet"
 - Never give medical diagnoses. Suggest consulting a doctor for serious conditions.
 - If asked about unrelated topics, gently redirect to air quality / health
@@ -260,7 +409,12 @@ YOUR ROLE:
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: groqMessages, max_tokens: 512, temperature: 0.7 }),
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          messages: groqMessages,
+          max_tokens: 256,
+          temperature: 0.7,
+        }),
       });
       const data = await res.json();
       const reply = data.choices?.[0]?.message?.content ?? 'Sorry, I could not get a response. Please try again.';
@@ -274,15 +428,15 @@ YOUR ROLE:
   };
 
   const handleDownload = () => {
-    const report = `AeroSense - Air Quality Report\nDate: ${new Date().toLocaleDateString()}\nCity: ${cityName}\nAQI: ${cityAQI} (${cat.label})\n\nPeak: ${displayName(peakStation.name)} (AQI ${peakStation.aqi})\nLowest: ${displayName(lowestStation.name)} (AQI ${lowestStation.aqi})\nDominant Pollutant: PM2.5\n\nGenerated by AeroSense AI`;
+    const report = `AeroSense - Air Quality Report\nDate: ${new Date().toLocaleDateString()}\nCity: ${cityName}\nAQI: ${activeAQI} (${cat.label})\n\nPeak: ${displayName(peakStation.name)} (AQI ${peakStation.aqi})\nLowest: ${displayName(lowestStation.name)} (AQI ${lowestStation.aqi})\nDominant Pollutant: PM2.5\n\nGenerated by AeroSense AI`;
     const blob = new Blob([report], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
     a.href = url; a.download = 'aerosense-report.txt'; a.click();
     URL.revokeObjectURL(url);
   };
 
-  const aqiColor = getAQIColor(cityAQI);
+  const aqiColor = getAQIColor(activeAQI);
 
   return (
     <>
@@ -358,7 +512,7 @@ YOUR ROLE:
           </div>
           <p style={{ fontSize: 14, color: '#475569', margin: 0 }}>
             AI-powered health guidance for <span style={{ color: '#94a3b8' }}>{cityName}</span> · AQI&nbsp;
-            <span style={{ color: aqiColor, fontWeight: 700 }}>{cityAQI}</span>&nbsp;
+            <span style={{ color: aqiColor, fontWeight: 700 }}>{activeAQI}</span>&nbsp;
             <span style={{ color: aqiColor, fontSize: 13 }}>({cat.label})</span>
           </p>
         </div>
@@ -367,7 +521,7 @@ YOUR ROLE:
         <div className="adv-card" style={{ marginBottom: 24, borderRadius: 20, padding: '20px 24px', background: `linear-gradient(135deg,${aqiColor}12 0%,rgba(6,8,14,0) 100%)`, border: `1px solid ${aqiColor}30`, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
           <div>
             <div style={{ fontSize: 12, color: '#475569', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>Current City AQI</div>
-            <div style={{ fontSize: 64, fontWeight: 700, color: aqiColor, lineHeight: 1, textShadow: `0 0 30px ${aqiColor}44` }}>{cityAQI}</div>
+            <div style={{ fontSize: 64, fontWeight: 700, color: aqiColor, lineHeight: 1, textShadow: `0 0 30px ${aqiColor}44` }}>{activeAQI}</div>
             <div style={{ marginTop: 6, display: 'inline-block', padding: '4px 12px', borderRadius: 99, background: aqiColor + '20', color: aqiColor, fontSize: 13, fontWeight: 700, border: `1px solid ${aqiColor}40`, letterSpacing: '0.06em' }}>
               {cat.label.toUpperCase()}
             </div>
@@ -400,8 +554,6 @@ YOUR ROLE:
             AI Health Advisor
           </div>
           <div style={{ borderRadius: 20, overflow: 'hidden', background: 'rgba(15,23,35,0.85)', border: '1px solid rgba(100,130,160,0.18)', boxShadow: '0 8px 40px rgba(0,0,0,0.45),inset 0 1px 0 rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', height: 480 }}>
-
-            {/* Chat header */}
             <div style={{ padding: '14px 18px', borderBottom: '1px solid rgba(100,130,160,0.12)', background: 'rgba(20,30,45,0.9)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
               <div style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(0,179,143,0.1)', border: '1px solid rgba(0,179,143,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Bot size={16} style={{ color: '#00b38f' }} />
@@ -411,13 +563,13 @@ YOUR ROLE:
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 1 }}>
                   <div className="pulse-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: '#00b38f' }} />
                   <span style={{ fontSize: 12, color: '#00b38f', fontFamily: 'IBM Plex Mono, monospace' }}>
-                    Live · AQI {cityAQI} · {cityName}
+                    Live · AQI {activeAQI} · {cityName}
                   </span>
-                  {owmLoading && (
-                    <span style={{ fontSize: 11, color: '#475569', marginLeft: 6 }}>· fetching data...</span>
-                  )}
+                  {owmLoading && <span style={{ fontSize: 11, color: '#475569', marginLeft: 6 }}>· fetching data...</span>}
                   {!owmLoading && owmCurrent && (
-                    <span style={{ fontSize: 11, color: '#334155', marginLeft: 6 }}>· past & forecast loaded ✓</span>
+                    <span style={{ fontSize: 11, color: '#334155', marginLeft: 6 }}>
+                      · {extForecast.length > 0 ? `${extForecast.length}pt forecast ✓` : 'data loaded ✓'}
+                    </span>
                   )}
                 </div>
               </div>
@@ -426,7 +578,6 @@ YOUR ROLE:
               </div>
             </div>
 
-            {/* Messages */}
             <div className="adv-scroll" style={{ flex: 1, overflowY: 'auto', padding: '16px 14px', background: 'transparent' }}>
               {!chatStarted && messages.length === 0 && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -455,7 +606,6 @@ YOUR ROLE:
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input */}
             <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(100,130,160,0.12)', flexShrink: 0, background: 'rgba(15,23,35,0.9)' }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input
@@ -474,14 +624,18 @@ YOUR ROLE:
                 </button>
               </div>
               <div style={{ fontSize: 11, color: '#334155', marginTop: 7, textAlign: 'center' }}>
-                Powered by Groq · Real air data from OpenWeatherMap · {cityName}
+                Powered by Groq · Real air data from Open-Meteo CAMS · {cityName}
               </div>
             </div>
           </div>
         </div>
 
-        {/* ── 24hr AQI Trend Chart ── */}
-        <AQIChart cityName={cityName} />
+        {/* ── Past 24h AQI Chart ── */}
+        <AQIChart
+          cityName={cityName}
+          chartData={chartData}
+          currentAQI={activeAQI}
+        />
 
       </motion.div>
     </>

@@ -14,47 +14,99 @@ import {
 type LayerKey = 'aqi' | 'pm25' | 'pm10' | 'no2' | 'o3';
 
 const LAYERS: { key: LayerKey; label: string; unit: string; max: number; desc: string }[] = [
-  { key: 'aqi', label: 'AQI', unit: '', max: 500, desc: 'Air Quality Index' },
+  { key: 'aqi',  label: 'AQI',   unit: '',      max: 500, desc: 'Air Quality Index' },
   { key: 'pm25', label: 'PM2.5', unit: 'µg/m³', max: 250, desc: 'Fine particulate matter' },
-  { key: 'pm10', label: 'PM10', unit: 'µg/m³', max: 400, desc: 'Coarse particulate matter' },
-  { key: 'no2', label: 'NO₂', unit: 'ppb', max: 200, desc: 'Nitrogen dioxide' },
-  { key: 'o3', label: 'O₃', unit: 'ppb', max: 150, desc: 'Ozone' },
+  { key: 'pm10', label: 'PM10',  unit: 'µg/m³', max: 400, desc: 'Coarse particulate matter' },
+  { key: 'no2',  label: 'NO₂',   unit: 'ppb',   max: 200, desc: 'Nitrogen dioxide' },
+  { key: 'o3',   label: 'O₃',    unit: 'ppb',   max: 150, desc: 'Ozone' },
 ];
 
-// Realistic hourly AQI multiplier curve
-const HOURLY_CURVE: Record<number, number> = {
-  0: 0.62, 1: 0.55, 2: 0.50, 3: 0.47, 4: 0.48, 5: 0.55,
-  6: 0.72, 7: 0.95, 8: 1.10, 9: 1.05, 10: 0.92, 11: 0.85,
-  12: 0.88, 13: 0.84, 14: 0.80, 15: 0.83, 16: 0.90, 17: 1.05,
-  18: 1.12, 19: 1.08, 20: 0.95, 21: 0.85, 22: 0.75, 23: 0.67,
-};
+const MAP_THEMES = [
+  { id: 'dark',      label: 'Dark',       preview: '#0a0e14', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                                                   attribution: '&copy; CARTO' },
+  { id: 'voyager',   label: 'Google Maps', preview: '#e8f0d8', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',                                        attribution: '&copy; CARTO' },
+  { id: 'light',     label: 'Light',      preview: '#f5f5f0', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',                                                   attribution: '&copy; CARTO' },
+  { id: 'satellite', label: 'Satellite',  preview: '#1a2a1a', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',                    attribution: '&copy; Esri' },
+  { id: 'terrain',   label: 'Terrain',    preview: '#c8d8a8', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',                   attribution: '&copy; Esri' },
+  { id: 'watercolor',label: 'Watercolor', preview: '#d4e8f0', url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',                                             attribution: 'Stamen Design' },
+  { id: 'osm',       label: 'Street',     preview: '#f0e8d8', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',                                                               attribution: '&copy; OpenStreetMap' },
+];
 
-// Apply hourly multiplier to a station
-function applyHour(station: SensorStation, hour: number): SensorStation {
-  const m = HOURLY_CURVE[hour] ?? 1;
-  const aqi = Math.round(Math.min(500, Math.max(1, station.aqi * m)));
+// ── Build real hourly curve from OWM past data ────────────────
+function buildRealCurve(owmPast: { hour: string; aqi: number }[]): Record<number, number> {
+  if (!owmPast.length) return buildFallbackCurve();
+  const hourMap: Record<number, number[]> = {};
+  owmPast.forEach(entry => {
+    const match = entry.hour.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) return;
+    let h = parseInt(match[1]);
+    const ampm = match[3].toUpperCase();
+    if (ampm === 'PM' && h !== 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    if (!hourMap[h]) hourMap[h] = [];
+    hourMap[h].push(entry.aqi);
+  });
+  const avgByHour: Record<number, number> = {};
+  Object.entries(hourMap).forEach(([h, vals]) => {
+    avgByHour[+h] = vals.reduce((a, b) => a + b, 0) / vals.length;
+  });
+  const allVals = Object.values(avgByHour);
+  if (!allVals.length) return buildFallbackCurve();
+  const mean = allVals.reduce((a, b) => a + b, 0) / allVals.length;
+  const curve: Record<number, number> = {};
+  const knownHours = Object.keys(avgByHour).map(Number).sort((a, b) => a - b);
+  for (let h = 0; h < 24; h++) {
+    if (avgByHour[h] !== undefined) {
+      curve[h] = avgByHour[h] / mean;
+    } else {
+      const prev = knownHours.filter(k => k < h).at(-1);
+      const next = knownHours.find(k => k > h);
+      if (prev !== undefined && next !== undefined) {
+        const t = (h - prev) / (next - prev);
+        curve[h] = (avgByHour[prev] / mean) + t * ((avgByHour[next] / mean) - (avgByHour[prev] / mean));
+      } else if (prev !== undefined) {
+        curve[h] = avgByHour[prev] / mean;
+      } else if (next !== undefined) {
+        curve[h] = avgByHour[next] / mean;
+      } else {
+        curve[h] = 1.0;
+      }
+    }
+  }
+  return curve;
+}
+
+function buildFallbackCurve(): Record<number, number> {
+  return {
+    0: 0.62, 1: 0.55, 2: 0.50, 3: 0.47, 4: 0.48, 5: 0.55,
+    6: 0.72, 7: 0.95, 8: 1.10, 9: 1.05, 10: 0.92, 11: 0.85,
+    12: 0.88, 13: 0.84, 14: 0.80, 15: 0.83, 16: 0.90, 17: 1.05,
+    18: 1.12, 19: 1.08, 20: 0.95, 21: 0.85, 22: 0.75, 23: 0.67,
+  };
+}
+
+function applyHour(station: SensorStation, hour: number, curve: Record<number, number>): SensorStation {
+  const m    = curve[hour] ?? 1;
+  const prev = curve[(hour - 1 + 24) % 24] ?? 1;
+  const aqi  = Math.round(Math.min(500, Math.max(1, station.aqi  * m)));
   const pm25 = Math.round(Math.min(500, Math.max(1, station.pm25 * m)));
   const pm10 = Math.round(Math.min(600, Math.max(1, station.pm10 * m)));
-  const no2 = Math.round(Math.min(200, Math.max(1, station.no2 * m)));
-  const o3 = Math.round(Math.min(150, Math.max(1, station.o3 * m)));
-  const so2 = Math.round(Math.min(100, Math.max(1, station.so2 * m)));
-  const trend: 'up' | 'down' | 'stable' =
-    m > (HOURLY_CURVE[(hour - 1 + 24) % 24] ?? 1) ? 'up'
-      : m < (HOURLY_CURVE[(hour - 1 + 24) % 24] ?? 1) ? 'down'
-        : 'stable';
+  const no2  = Math.round(Math.min(200, Math.max(1, station.no2  * m)));
+  const o3   = Math.round(Math.min(150, Math.max(1, station.o3   * m)));
+  const so2  = Math.round(Math.min(100, Math.max(1, station.so2  * m)));
+  const trend: 'up' | 'down' | 'stable' = m > prev ? 'up' : m < prev ? 'down' : 'stable';
   return { ...station, aqi, pm25, pm10, no2, o3, so2, trend };
 }
 
 const getThreatLevel = (aqi: number) => {
-  if (aqi <= 50) return { label: 'MINIMAL', color: '#00d4aa', bg: '#00d4aa12' };
-  if (aqi <= 100) return { label: 'LOW', color: '#fbbf24', bg: '#fbbf2412' };
-  if (aqi <= 150) return { label: 'MODERATE', color: '#f97316', bg: '#f9731612' };
-  if (aqi <= 200) return { label: 'HIGH', color: '#ef4444', bg: '#ef444412' };
-  if (aqi <= 300) return { label: 'SEVERE', color: '#dc2626', bg: '#dc262612' };
-  return { label: 'CRITICAL', color: '#ff2020', bg: '#ff202020' };
+  if (aqi <= 50)  return { label: 'MINIMAL',  color: '#00d4aa', bg: '#00d4aa12' };
+  if (aqi <= 100) return { label: 'LOW',       color: '#fbbf24', bg: '#fbbf2412' };
+  if (aqi <= 150) return { label: 'MODERATE',  color: '#f97316', bg: '#f9731612' };
+  if (aqi <= 200) return { label: 'HIGH',      color: '#ef4444', bg: '#ef444412' };
+  if (aqi <= 300) return { label: 'SEVERE',    color: '#dc2626', bg: '#dc262612' };
+  return             { label: 'CRITICAL',  color: '#ff2020', bg: '#ff202020' };
 };
 
-// ── Map Controls ─────────────────────────────────────────────
+// ── Map Controls ──────────────────────────────────────────────
 const MapControls = ({ userLoc, onLocate }: { userLoc: [number, number] | null; onLocate: () => void }) => {
   const map = useMap();
   const btn: React.CSSProperties = {
@@ -67,20 +119,29 @@ const MapControls = ({ userLoc, onLocate }: { userLoc: [number, number] | null; 
   return (
     <div className="leaflet-top leaflet-right" style={{ marginTop: 16, marginRight: 16 }}>
       <div className="leaflet-control" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <button style={{ ...btn, color: userLoc ? '#f97316' : '#64748b' }} onClick={onLocate}
+        <button
+          style={{ ...btn, color: userLoc ? '#f97316' : '#64748b' }}
+          onClick={onLocate}
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(249,115,22,0.1)'; e.currentTarget.style.color = '#f97316'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(8,12,18,0.92)'; e.currentTarget.style.color = userLoc ? '#f97316' : '#64748b'; }}>
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(8,12,18,0.92)'; e.currentTarget.style.color = userLoc ? '#f97316' : '#64748b'; }}
+        >
           <Locate size={20} strokeWidth={2.5} />
         </button>
         <div style={{ height: 1, background: 'rgba(255,60,0,0.1)', margin: '4px 0' }} />
-        <button style={btn} onClick={() => map.zoomIn()}
+        <button
+          style={btn}
+          onClick={() => map.zoomIn()}
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#e2e8f0'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(8,12,18,0.92)'; e.currentTarget.style.color = '#64748b'; }}>
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(8,12,18,0.92)'; e.currentTarget.style.color = '#64748b'; }}
+        >
           <ZoomIn size={20} />
         </button>
-        <button style={btn} onClick={() => map.zoomOut()}
+        <button
+          style={btn}
+          onClick={() => map.zoomOut()}
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#e2e8f0'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(8,12,18,0.92)'; e.currentTarget.style.color = '#64748b'; }}>
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(8,12,18,0.92)'; e.currentTarget.style.color = '#64748b'; }}
+        >
           <ZoomOut size={20} />
         </button>
       </div>
@@ -88,18 +149,181 @@ const MapControls = ({ userLoc, onLocate }: { userLoc: [number, number] | null; 
   );
 };
 
-// ── User Location Marker ──────────────────────────────────────
+// ── User Location Marker (with "You are here" tooltip) ────────
 const UserLocationMarker = ({ position }: { position: [number, number] | null }) => {
   const map = useMap();
   const markerRef = useRef<L.Marker | null>(null);
+
   useEffect(() => {
     if (!position) return;
-    const icon = L.divIcon({ className: 'clear-custom-icon', html: `<div class="user-dot"></div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
-    if (markerRef.current) markerRef.current.setLatLng(position);
-    else markerRef.current = L.marker(position, { icon, interactive: false }).addTo(map);
-    return () => { markerRef.current?.remove(); markerRef.current = null; };
+
+    const icon = L.divIcon({
+      className: 'clear-custom-icon',
+      html: `<div class="user-dot"></div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+
+    const tooltipHtml = `
+      <div style="font-family:'IBM Plex Mono',monospace;background:rgba(6,8,14,0.97);border:1px solid rgba(249,115,22,0.55);border-radius:14px;padding:14px 18px;box-shadow:0 12px 40px rgba(0,0,0,0.9),0 0 30px rgba(249,115,22,0.2);min-width:190px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <div style="width:8px;height:8px;border-radius:50%;background:#f97316;box-shadow:0 0 8px #f97316;flex-shrink:0;animation:blink 1.4s ease-in-out infinite;"></div>
+          <span style="font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:#e2e8f0;">You are here</span>
+        </div>
+        <div style="font-size:12px;color:#64748b;margin-top:2px;letter-spacing:0.04em;">
+          ${position[0].toFixed(4)}°N &nbsp;·&nbsp; ${position[1].toFixed(4)}°E
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.05);display:flex;align-items:center;gap:6px;">
+          <div style="width:6px;height:6px;border-radius:50%;background:#f97316;"></div>
+          <span style="font-size:11px;color:#f97316;font-weight:700;letter-spacing:0.1em;">CURRENT LOCATION</span>
+        </div>
+      </div>
+    `;
+
+    if (markerRef.current) {
+      markerRef.current.setLatLng(position);
+    } else {
+      markerRef.current = L.marker(position, { icon, interactive: true, zIndexOffset: 1000 })
+        .addTo(map)
+        .bindTooltip(tooltipHtml, {
+          className: 'clean-tooltip',
+          direction: 'top',
+          offset: [0, -14],
+          sticky: false,
+        });
+    }
+
+    return () => {
+      markerRef.current?.remove();
+      markerRef.current = null;
+    };
   }, [position, map]);
+
   return null;
+};
+
+// ── Map Theme Switcher ────────────────────────────────────────
+const MapThemeSwitcher = ({
+  activeTheme,
+  onThemeChange,
+}: {
+  activeTheme: string;
+  onThemeChange: (id: string) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div style={{ position: 'absolute', bottom: 130, right: 16, zIndex: 1000 }}>
+      {/* Toggle button */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Map Theme"
+        style={{
+          width: 44, height: 44,
+          background: open ? 'rgba(249,115,22,0.15)' : 'rgba(8,12,18,0.92)',
+          border: `1px solid ${open ? 'rgba(249,115,22,0.5)' : 'rgba(255,60,0,0.15)'}`,
+          borderRadius: 12,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer',
+          color: open ? '#f97316' : '#64748b',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+          transition: 'all 0.2s',
+        }}
+        onMouseEnter={e => {
+          if (!open) {
+            e.currentTarget.style.background = 'rgba(249,115,22,0.1)';
+            e.currentTarget.style.color = '#f97316';
+          }
+        }}
+        onMouseLeave={e => {
+          if (!open) {
+            e.currentTarget.style.background = 'rgba(8,12,18,0.92)';
+            e.currentTarget.style.color = '#64748b';
+          }
+        }}
+      >
+        {/* Layers icon */}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+          <polyline points="2 17 12 22 22 17" />
+          <polyline points="2 12 12 17 22 12" />
+        </svg>
+      </button>
+
+      {/* Theme panel */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 8 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+            style={{
+              position: 'absolute', bottom: 52, right: 0,
+              background: 'rgba(6,8,14,0.97)',
+              backdropFilter: 'blur(20px)',
+              border: '1px solid rgba(249,115,22,0.2)',
+              borderRadius: 18,
+              padding: '16px',
+              width: 210,
+              boxShadow: '0 24px 60px rgba(0,0,0,0.9), 0 0 40px rgba(249,115,22,0.08)',
+            }}
+          >
+            <div style={{
+              fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, fontWeight: 700,
+              color: '#64748b', letterSpacing: '0.12em', textTransform: 'uppercase',
+              marginBottom: 12,
+            }}>
+              Map Theme
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {MAP_THEMES.map(theme => {
+                const isActive = theme.id === activeTheme;
+                return (
+                  <button
+                    key={theme.id}
+                    onClick={() => { onThemeChange(theme.id); setOpen(false); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '9px 12px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: isActive ? 'rgba(249,115,22,0.12)' : 'rgba(255,255,255,0.03)',
+                      outline: isActive ? '1px solid rgba(249,115,22,0.4)' : '1px solid transparent',
+                      transition: 'all 0.15s', textAlign: 'left',
+                    }}
+                    onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
+                    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
+                  >
+                    {/* Color swatch */}
+                    <div style={{
+                      width: 28, height: 20, borderRadius: 6, flexShrink: 0,
+                      background: theme.preview,
+                      border: isActive ? '2px solid #f97316' : '1px solid rgba(255,255,255,0.1)',
+                      boxShadow: isActive ? '0 0 8px rgba(249,115,22,0.5)' : 'none',
+                      transition: 'all 0.15s',
+                    }} />
+                    <span style={{
+                      fontFamily: 'IBM Plex Mono, monospace', fontSize: 13,
+                      fontWeight: isActive ? 700 : 500,
+                      color: isActive ? '#f97316' : '#94a3b8',
+                      transition: 'color 0.15s',
+                    }}>
+                      {theme.label}
+                    </span>
+                    {isActive && (
+                      <div style={{
+                        marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%',
+                        background: '#f97316', boxShadow: '0 0 6px #f97316', flexShrink: 0,
+                      }} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 };
 
 // ── Heatmap ───────────────────────────────────────────────────
@@ -116,13 +340,13 @@ const HeatmapLayer = ({ stations, layerKey }: { stations: SensorStation[]; layer
     };
     stations.forEach(s => {
       const rawVal = layerKey === 'aqi' ? s.aqi : s[layerKey] as number;
-      const layer = LAYERS.find(l => l.key === layerKey)!;
-      const pct = Math.min(rawVal / layer.max, 1);
-      const color = layerKey === 'aqi' ? getAQIColor(s.aqi) : getInfraredColor(pct);
+      const layer  = LAYERS.find(l => l.key === layerKey)!;
+      const pct    = Math.min(rawVal / layer.max, 1);
+      const color  = layerKey === 'aqi' ? getAQIColor(s.aqi) : getInfraredColor(pct);
       const threat = getThreatLevel(s.aqi);
       els.push(L.circle([s.lat, s.lng], { radius: 2500 + pct * 4000, color: 'transparent', fillColor: color, fillOpacity: 0.03 + pct * 0.05, interactive: false }).addTo(map));
-      els.push(L.circle([s.lat, s.lng], { radius: 900 + pct * 2000, color: 'transparent', fillColor: color, fillOpacity: 0.07 + pct * 0.12, interactive: false }).addTo(map));
-      els.push(L.circle([s.lat, s.lng], { radius: 300 + pct * 700, color, weight: s.aqi > 200 ? 2 : 1, fillColor: color, fillOpacity: 0.25 + pct * 0.35, interactive: false, dashArray: s.aqi > 200 ? '6 3' : undefined }).addTo(map));
+      els.push(L.circle([s.lat, s.lng], { radius: 900  + pct * 2000, color: 'transparent', fillColor: color, fillOpacity: 0.07 + pct * 0.12, interactive: false }).addTo(map));
+      els.push(L.circle([s.lat, s.lng], { radius: 300  + pct * 700,  color, weight: s.aqi > 200 ? 2 : 1, fillColor: color, fillOpacity: 0.25 + pct * 0.35, interactive: false, dashArray: s.aqi > 200 ? '6 3' : undefined }).addTo(map));
       const dot = L.circleMarker([s.lat, s.lng], { radius: 6 + pct * 4, color: '#0a0e14', weight: 2, fillColor: color, fillOpacity: 1 })
         .addTo(map)
         .bindTooltip(`
@@ -157,15 +381,15 @@ const MapSync = ({ coords, userLoc, isLocating }: { coords: [number, number]; us
 
 // ── Hotspot Detail ────────────────────────────────────────────
 const HotspotDetail = ({ station, onClose }: { station: SensorStation; onClose: () => void }) => {
-  const color = getAQIColor(station.aqi);
+  const color  = getAQIColor(station.aqi);
   const threat = getThreatLevel(station.aqi);
   const metrics = [
     { label: 'PM2.5', value: station.pm25, unit: 'µg/m³', pct: station.pm25 / 250 },
-    { label: 'PM10', value: station.pm10, unit: 'µg/m³', pct: station.pm10 / 400 },
-    { label: 'NO₂', value: station.no2, unit: 'ppb', pct: station.no2 / 200 },
-    { label: 'O₃', value: station.o3, unit: 'ppb', pct: station.o3 / 150 },
-    { label: 'CO', value: station.co, unit: 'ppm', pct: station.co / 10 },
-    { label: 'SO₂', value: station.so2, unit: 'ppb', pct: station.so2 / 100 },
+    { label: 'PM10',  value: station.pm10, unit: 'µg/m³', pct: station.pm10 / 400 },
+    { label: 'NO₂',   value: station.no2,  unit: 'ppb',   pct: station.no2  / 200 },
+    { label: 'O₃',    value: station.o3,   unit: 'ppb',   pct: station.o3   / 150 },
+    { label: 'CO',    value: station.co,   unit: 'ppm',   pct: station.co   / 10  },
+    { label: 'SO₂',   value: station.so2,  unit: 'ppb',   pct: station.so2  / 100 },
   ];
   return (
     <motion.div
@@ -185,9 +409,12 @@ const HotspotDetail = ({ station, onClose }: { station: SensorStation; onClose: 
           <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 20, fontWeight: 800, color: '#e2e8f0', lineHeight: 1.2 }}>{station.name}</div>
           <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, color: '#64748b', marginTop: 4 }}>{station.lat.toFixed(4)}°N · {station.lng.toFixed(4)}°E</div>
         </div>
-        <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.04)', border: 'none', borderRadius: 10, cursor: 'pointer', color: '#64748b', padding: 8, transition: 'all 0.2s' }}
+        <button
+          onClick={onClose}
+          style={{ background: 'rgba(255,255,255,0.04)', border: 'none', borderRadius: 10, cursor: 'pointer', color: '#64748b', padding: 8, transition: 'all 0.2s' }}
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#e2e8f0'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = '#64748b'; }}>
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = '#64748b'; }}
+        >
           <X size={18} />
         </button>
       </div>
@@ -237,7 +464,7 @@ const HotspotDetail = ({ station, onClose }: { station: SensorStation; onClose: 
 
 // ── Threat Row ────────────────────────────────────────────────
 const ThreatRow = ({ station, rank, isSelected, onClick }: { station: SensorStation; rank: number; isSelected: boolean; onClick: () => void }) => {
-  const color = getAQIColor(station.aqi);
+  const color  = getAQIColor(station.aqi);
   const threat = getThreatLevel(station.aqi);
   return (
     <motion.button
@@ -263,10 +490,10 @@ const ThreatRow = ({ station, rank, isSelected, onClick }: { station: SensorStat
   );
 };
 
-// ── Mini Sparkline for timeline ───────────────────────────────
-const Sparkline = ({ baseAqi, currentHour }: { baseAqi: number; currentHour: number }) => {
+// ── Mini Sparkline ────────────────────────────────────────────
+const Sparkline = ({ baseAqi, currentHour, curve }: { baseAqi: number; currentHour: number; curve: Record<number, number> }) => {
   const W = 140, H = 36;
-  const points = Array.from({ length: 24 }, (_, h) => Math.round(baseAqi * HOURLY_CURVE[h]));
+  const points = Array.from({ length: 24 }, (_, h) => Math.round(baseAqi * (curve[h] ?? 1)));
   const min = Math.min(...points), max = Math.max(...points);
   const range = max - min || 1;
   const toX = (h: number) => (h / 23) * W;
@@ -285,13 +512,14 @@ const Sparkline = ({ baseAqi, currentHour }: { baseAqi: number; currentHour: num
 
 // ── Main ──────────────────────────────────────────────────────
 const Hotspots = () => {
-  const { stations, userCoords } = useAirQuality();
-  const [activeLayer, setActiveLayer] = useState<LayerKey>('aqi');
+  const { stations, userCoords, owmAir } = useAirQuality();
+  const [activeLayer,     setActiveLayer]     = useState<LayerKey>('aqi');
   const [selectedStation, setSelectedStation] = useState<SensorStation | null>(null);
-  const [hour, setHour] = useState<number>(new Date().getHours());
-  const [userLoc, setUserLoc] = useState<[number, number] | null>(null);
-  const [isLocating, setIsLocating] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [hour,            setHour]            = useState<number>(new Date().getHours());
+  const [userLoc,         setUserLoc]         = useState<[number, number] | null>(null);
+  const [isLocating,      setIsLocating]      = useState(false);
+  const [tick,            setTick]            = useState(0);
+  const [activeTheme,     setActiveTheme]     = useState('dark');
 
   useEffect(() => {
     const t = setInterval(() => setTick(p => p + 1), 1800);
@@ -302,7 +530,8 @@ const Hotspots = () => {
     if (!('geolocation' in navigator)) return;
     navigator.geolocation.getCurrentPosition(
       p => setUserLoc([p.coords.latitude, p.coords.longitude]),
-      () => { }, { enableHighAccuracy: true, timeout: 5000 }
+      () => {},
+      { enableHighAccuracy: true, timeout: 5000 }
     );
   }, []);
 
@@ -316,17 +545,26 @@ const Hotspots = () => {
     );
   };
 
-  const localStations = stations.filter(s => !s.id.startsWith('init-'));
-  const baseStations = localStations.length > 0 ? localStations : stations;
+  const localStations = stations.filter(s => !s.id.startsWith('init-') && s.id !== 's-center');
 
-  const hourlyStations = useMemo(() => baseStations.map(s => applyHour(s, hour)), [baseStations, hour]);
+  const hourlyCurve = useMemo(() =>
+    buildRealCurve(owmAir?.past ?? []),
+    [owmAir?.past]
+  );
+
+  const isRealCurve = (owmAir?.past?.length ?? 0) > 0;
+
+  const hourlyStations = useMemo(() =>
+    localStations.map(s => applyHour(s, hour, hourlyCurve)),
+    [localStations, hour, hourlyCurve]
+  );
 
   const sorted = [...hourlyStations].sort((a, b) => b.aqi - a.aqi);
-  const top5 = sorted.slice(0, 5);
-  const worst = top5[0];
-  const worstColor = worst ? getAQIColor(worst.aqi) : '#00d4aa';
+  const top5   = sorted.slice(0, 5);
+  const worst  = top5[0];
+  const worstColor  = worst ? getAQIColor(worst.aqi) : '#00d4aa';
   const worstThreat = worst ? getThreatLevel(worst.aqi) : { label: 'MINIMAL', color: '#00d4aa', bg: '#00d4aa12' };
-  const isCritical = worst && worst.aqi > 200;
+  const isCritical  = worst && worst.aqi > 200;
 
   const selectedHourly = selectedStation
     ? hourlyStations.find(s => s.id === selectedStation.id) ?? null
@@ -335,13 +573,30 @@ const Hotspots = () => {
   const isLiveHour = hour === new Date().getHours();
 
   const hourLabel = (h: number) => {
-    if (h === 0) return '12 AM';
+    if (h === 0)  return '12 AM';
     if (h === 12) return '12 PM';
     return h < 12 ? `${h} AM` : `${h - 12} PM`;
   };
 
-  const peakHours = [8, 18];
-  const isPeakHour = peakHours.includes(hour);
+  const peakHours = useMemo(() => {
+    const entries = Object.entries(hourlyCurve).map(([h, v]) => ({ h: +h, v }));
+    const sorted  = entries.sort((a, b) => b.v - a.v);
+    return new Set(sorted.slice(0, 3).map(e => e.h));
+  }, [hourlyCurve]);
+
+  const isPeakHour = peakHours.has(hour);
+
+  const currentTheme = MAP_THEMES.find(t => t.id === activeTheme) ?? MAP_THEMES[0];
+
+  if (localStations.length === 0) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#06080e', flexDirection: 'column', gap: 16 }}>
+        <Flame size={48} style={{ color: '#f97316', filter: 'drop-shadow(0 0 20px #f97316)' }} />
+        <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 24, fontWeight: 800, color: '#e2e8f0' }}>Loading Hotspots</div>
+        <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 14, color: '#64748b' }}>Fetching nearby stations...</div>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -370,8 +625,10 @@ const Hotspots = () => {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
         {/* ── LEFT PANEL ── */}
-        <div className="hs-scroll" style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto', background: 'rgba(6,8,14,0.98)', borderRight: '1px solid rgba(249,115,22,0.08)', boxShadow: '4px 0 40px rgba(0,0,0,0.8)', zIndex: 10 }}>
-
+        <div
+          className="hs-scroll"
+          style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto', background: 'rgba(6,8,14,0.98)', borderRight: '1px solid rgba(249,115,22,0.08)', boxShadow: '4px 0 40px rgba(0,0,0,0.8)', zIndex: 10 }}
+        >
           {/* Header */}
           <div style={{ padding: '24px 20px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -381,26 +638,28 @@ const Hotspots = () => {
                 <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, color: '#64748b', letterSpacing: '0.1em', marginTop: 4 }}>POLLUTION INTELLIGENCE</div>
               </div>
             </div>
-            
-            {/* UPDATED: LIGHT GREYISH LIVE NOW BADGE WITH MORE GLOW */}
-            <div style={{ 
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, marginTop: 14,
-              background: isLiveHour ? 'rgba(255,255,255,0.06)' : 'rgba(249,115,22,0.05)', 
+
+            {/* Data source badge */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: isRealCurve ? '#00d4aa' : '#f97316' }} />
+              <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, color: isRealCurve ? '#00d4aa' : '#f97316' }}>
+                {isRealCurve ? 'Real OWM hourly curve active' : 'Estimated curve (OWM loading...)'}
+              </span>
+            </div>
+
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: 10, marginTop: 4,
+              background: isLiveHour ? 'rgba(255,255,255,0.06)' : 'rgba(249,115,22,0.05)',
               border: isLiveHour ? '1px solid rgba(255,255,255,0.25)' : '1px solid rgba(249,115,22,0.1)',
               boxShadow: isLiveHour ? '0 0 20px rgba(255,255,255,0.1), inset 0 0 15px rgba(255,255,255,0.05)' : 'none',
-              transition: 'all 0.3s ease'
+              transition: 'all 0.3s ease',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div className={isLiveHour ? 'blink' : ''} style={{ 
-                  width: 8, height: 8, borderRadius: '50%', 
-                  background: isLiveHour ? '#cbd5e1' : '#f97316', 
-                  boxShadow: isLiveHour ? '0 0 12px #cbd5e1, 0 0 24px rgba(203, 213, 225, 0.6)' : '0 0 8px #f97316' 
-                }} />
-                <span style={{ 
-                  fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, fontWeight: 700,
-                  color: isLiveHour ? '#cbd5e1' : '#f97316',
-                  textShadow: isLiveHour ? '0 0 12px rgba(203,213,225,0.6)' : 'none'
-                }}>
+                <div
+                  className={isLiveHour ? 'blink' : ''}
+                  style={{ width: 8, height: 8, borderRadius: '50%', background: isLiveHour ? '#cbd5e1' : '#f97316', boxShadow: isLiveHour ? '0 0 12px #cbd5e1, 0 0 24px rgba(203,213,225,0.6)' : '0 0 8px #f97316' }}
+                />
+                <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, fontWeight: 700, color: isLiveHour ? '#cbd5e1' : '#f97316', textShadow: isLiveHour ? '0 0 12px rgba(203,213,225,0.6)' : 'none' }}>
                   {isLiveHour ? 'LIVE NOW' : `REPLAY ${hourLabel(hour)}`}
                 </span>
               </div>
@@ -430,10 +689,15 @@ const Hotspots = () => {
                   <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 14, color: '#64748b' }}>AQI</span>
                   <span style={{ marginLeft: 6, padding: '4px 10px', borderRadius: 6, background: worstThreat.bg, color: worstThreat.color, fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', border: `1px solid ${worstColor}30` }}>{worstThreat.label}</span>
                 </div>
-                {/* Mini sparkline */}
                 <div style={{ marginTop: 12 }}>
-                  <Sparkline baseAqi={baseStations.find(s => s.id === worst.id)?.aqi ?? worst.aqi} currentHour={hour} />
-                  <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, color: '#475569', marginTop: 6 }}>24h AQI pattern</div>
+                  <Sparkline
+                    baseAqi={localStations.find(s => s.id === worst.id)?.aqi ?? worst.aqi}
+                    currentHour={hour}
+                    curve={hourlyCurve}
+                  />
+                  <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, color: '#475569', marginTop: 6 }}>
+                    {isRealCurve ? 'Real OWM 24h pattern' : 'Estimated 24h pattern'}
+                  </div>
                 </div>
               </motion.div>
             </div>
@@ -441,9 +705,14 @@ const Hotspots = () => {
 
           {/* Peak hour warning */}
           {isPeakHour && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ margin: '0 20px 16px', padding: '12px 16px', borderRadius: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              style={{ margin: '0 20px 16px', padding: '12px 16px', borderRadius: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', gap: 10 }}
+            >
               <AlertTriangle size={16} style={{ color: '#ef4444', flexShrink: 0 }} />
-              <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, color: '#ef4444', fontWeight: 600 }}>RUSH HOUR · Peak pollution window</span>
+              <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, color: '#ef4444', fontWeight: 600 }}>
+                PEAK POLLUTION HOUR · {isRealCurve ? 'Based on real OWM data' : 'Estimated'}
+              </span>
             </motion.div>
           )}
 
@@ -454,7 +723,11 @@ const Hotspots = () => {
               {LAYERS.map(l => {
                 const active = activeLayer === l.key;
                 return (
-                  <button key={l.key} onClick={() => setActiveLayer(l.key)} style={{ padding: '8px 14px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, fontWeight: active ? 700 : 500, background: active ? `${worstColor}18` : 'rgba(255,255,255,0.03)', color: active ? worstColor : '#94a3b8', outline: active ? `1px solid ${worstColor}35` : '1px solid transparent', transition: 'all 0.2s' }}>
+                  <button
+                    key={l.key}
+                    onClick={() => setActiveLayer(l.key)}
+                    style={{ padding: '8px 14px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, fontWeight: active ? 700 : 500, background: active ? `${worstColor}18` : 'rgba(255,255,255,0.03)', color: active ? worstColor : '#94a3b8', outline: active ? `1px solid ${worstColor}35` : '1px solid transparent', transition: 'all 0.2s' }}
+                  >
                     {l.label}
                   </button>
                 );
@@ -467,7 +740,8 @@ const Hotspots = () => {
             <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, fontWeight: 700, color: '#64748b', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 14 }}>Threat Board · Top {top5.length}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {top5.map((s, i) => (
-                <ThreatRow key={s.id} station={s} rank={i + 1}
+                <ThreatRow
+                  key={s.id} station={s} rank={i + 1}
                   isSelected={selectedStation?.id === s.id}
                   onClick={() => setSelectedStation(selectedStation?.id === s.id ? null : s)}
                 />
@@ -479,12 +753,12 @@ const Hotspots = () => {
           <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
             <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, fontWeight: 700, color: '#64748b', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 12 }}>AQI Scale</div>
             {[
-              { label: 'Good', range: '0–50', color: '#00d4aa' },
-              { label: 'Moderate', range: '51–100', color: '#fbbf24' },
+              { label: 'Good',      range: '0–50',   color: '#00d4aa' },
+              { label: 'Moderate',  range: '51–100',  color: '#fbbf24' },
               { label: 'Sensitive', range: '101–150', color: '#f97316' },
               { label: 'Unhealthy', range: '151–200', color: '#ef4444' },
-              { label: 'Severe', range: '201–300', color: '#dc2626' },
-              { label: 'Critical', range: '300+', color: '#ff2020' },
+              { label: 'Severe',    range: '201–300', color: '#dc2626' },
+              { label: 'Critical',  range: '300+',    color: '#ff2020' },
             ].map(item => (
               <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <div style={{ width: 32, height: 6, borderRadius: 99, background: item.color, flexShrink: 0, boxShadow: `0 0 8px ${item.color}66` }} />
@@ -498,14 +772,28 @@ const Hotspots = () => {
         {/* ── MAP ── */}
         <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <div className="scan-line" />
-          <MapContainer center={userLoc || userCoords} zoom={12} style={{ height: '100%', width: '100%', background: '#04060c' }} zoomControl={false}>
-            <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png" attribution="&copy; CARTO" opacity={0.7} />
-            <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png" attribution="" pane="shadowPane" />
+
+          <MapContainer
+            center={userLoc || userCoords}
+            zoom={12}
+            style={{ height: '100%', width: '100%', background: '#04060c' }}
+            zoomControl={false}
+          >
+            {/* Single dynamic tile layer — key forces full remount on theme change */}
+            <TileLayer
+              key={activeTheme}
+              url={currentTheme.url}
+              attribution={currentTheme.attribution}
+              opacity={0.85}
+            />
             <MapSync coords={userCoords} userLoc={userLoc} isLocating={isLocating} />
             <HeatmapLayer stations={hourlyStations} layerKey={activeLayer} />
             <UserLocationMarker position={userLoc} />
             <MapControls userLoc={userLoc} onLocate={handleLocate} />
           </MapContainer>
+
+          {/* Theme switcher — outside MapContainer so AnimatePresence works cleanly */}
+          <MapThemeSwitcher activeTheme={activeTheme} onThemeChange={setActiveTheme} />
 
           {/* Top badge */}
           <div style={{ position: 'absolute', top: 20, left: 24, right: 80, zIndex: 999, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
@@ -515,7 +803,11 @@ const Hotspots = () => {
               <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 12, color: '#64748b' }}>{LAYERS.find(l => l.key === activeLayer)?.desc}</span>
             </div>
             {worst && (
-              <motion.div key={tick} initial={{ opacity: 0.6 }} animate={{ opacity: 1 }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 12, background: 'rgba(6,8,14,0.94)', backdropFilter: 'blur(16px)', border: `1px solid ${worstColor}44`, boxShadow: `0 8px 30px rgba(0,0,0,0.7), 0 0 20px ${worstColor}15` }}>
+              <motion.div
+                key={tick}
+                initial={{ opacity: 0.6 }} animate={{ opacity: 1 }}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderRadius: 12, background: 'rgba(6,8,14,0.94)', backdropFilter: 'blur(16px)', border: `1px solid ${worstColor}44`, boxShadow: `0 8px 30px rgba(0,0,0,0.7), 0 0 20px ${worstColor}15` }}
+              >
                 <Zap size={14} style={{ color: worstColor }} />
                 <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, color: '#cbd5e1' }}>Peak:</span>
                 <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, fontWeight: 800, color: worstColor }}>{worst.aqi} AQI</span>
@@ -525,50 +817,63 @@ const Hotspots = () => {
           </div>
 
           {/* ── TIMELINE ── */}
-          <div style={{ position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 999, background: "rgba(6,8,14,0.97)", backdropFilter: "blur(24px)", border: "1px solid rgba(249,115,22,0.22)", borderRadius: 32, padding: "28px 32px", width: "94%", maxWidth: 820, boxShadow: "0 24px 80px rgba(0,0,0,0.9), 0 0 50px rgba(249,115,22,0.1)" }}>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
+          <div style={{ position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 999, background: 'rgba(6,8,14,0.97)', backdropFilter: 'blur(24px)', border: '1px solid rgba(249,115,22,0.22)', borderRadius: 32, padding: '28px 32px', width: '94%', maxWidth: 820, boxShadow: '0 24px 80px rgba(0,0,0,0.9), 0 0 50px rgba(249,115,22,0.1)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
 
               {/* Time display */}
               <div style={{ flexShrink: 0, minWidth: 130 }}>
-                <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 13, color: isLiveHour ? "#cbd5e1" : "#64748b", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
-                  {isLiveHour ? "⚪ LIVE NOW" : "⏪ REPLAY"}
+                <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, color: isLiveHour ? '#cbd5e1' : '#64748b', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+                  {isLiveHour ? '⚪ LIVE NOW' : '⏪ REPLAY'}
                 </div>
-                <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 44, fontWeight: 800, color: "#f97316", lineHeight: 1, textShadow: "0 0 30px rgba(249,115,22,0.5)" }}>
+                <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 44, fontWeight: 800, color: '#f97316', lineHeight: 1, textShadow: '0 0 30px rgba(249,115,22,0.5)' }}>
                   {hourLabel(hour)}
                 </div>
-                <div style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 13, color: "#64748b", marginTop: 8, fontWeight: 500 }}>
-                  x{HOURLY_CURVE[hour].toFixed(2)} intensity
+                <div style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, color: '#64748b', marginTop: 8, fontWeight: 500 }}>
+                  ×{(hourlyCurve[hour] ?? 1).toFixed(2)} intensity
                 </div>
               </div>
 
-              {/* Slider section */}
+              {/* Slider */}
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                   {[0, 6, 12, 18, 23].map(h => (
-                    <span key={h} style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 14, color: h === hour ? "#f97316" : "#64748b", fontWeight: h === hour ? 700 : 500, transition: "color 0.2s" }}>
-                      {h.toString().padStart(2, "0")}
+                    <span key={h} style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 14, color: h === hour ? '#f97316' : '#64748b', fontWeight: h === hour ? 700 : 500, transition: 'color 0.2s' }}>
+                      {h.toString().padStart(2, '0')}
                     </span>
                   ))}
                 </div>
-                <div style={{ position: "relative", marginBottom: 14 }}>
-                  <div style={{ height: 8, borderRadius: 99, background: "linear-gradient(90deg, #334155 0%, #00d4aa 25%, #fbbf24 40%, #ef4444 60%, #ef4444 70%, #fbbf24 85%, #334155 100%)", marginBottom: 8, opacity: 0.6 }} />
-                  <input type="range" min={0} max={23} value={hour} onChange={e => setHour(+e.target.value)} className="timeline-slider" style={{ width: "100%", background: "rgba(255,255,255,0.06)", position: "relative", zIndex: 2, marginTop: -5 }} />
+                <div style={{ position: 'relative', marginBottom: 14 }}>
+                  <div style={{ height: 8, borderRadius: 99, background: 'linear-gradient(90deg, #334155 0%, #00d4aa 25%, #fbbf24 40%, #ef4444 60%, #ef4444 70%, #fbbf24 85%, #334155 100%)', marginBottom: 8, opacity: 0.6 }} />
+                  <input
+                    type="range" min={0} max={23} value={hour}
+                    onChange={e => setHour(+e.target.value)}
+                    className="timeline-slider"
+                    style={{ width: '100%', background: 'rgba(255,255,255,0.06)', position: 'relative', zIndex: 2, marginTop: -5 }}
+                  />
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  {["Quiet", "Morning Rush", "Midday", "Evening Rush", "Night"].map(l => (
-                    <span key={l} style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 13, color: "#64748b", fontWeight: 500 }}>{l}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  {['Quiet', 'Morning Rush', 'Midday', 'Evening Rush', 'Night'].map(l => (
+                    <span key={l} style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, color: '#64748b', fontWeight: 500 }}>{l}</span>
                   ))}
                 </div>
               </div>
 
-              {/* Quick jump buttons */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
-                {[["Now", new Date().getHours()], ["AM Rush", 8], ["PM Rush", 18], ["Night", 0]].map(([label, h]) => {
+              {/* Quick jump */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+                {([
+                  ['Now',      new Date().getHours()],
+                  ['AM Rush',  [...peakHours].sort((a, b) => a - b).find(h => h >= 6 && h <= 11) ?? 8],
+                  ['PM Rush',  [...peakHours].sort((a, b) => a - b).find(h => h >= 15 && h <= 20) ?? 18],
+                  ['Night',    0],
+                ] as [string, number][]).map(([label, h]) => {
                   const active = hour === h;
                   return (
-                    <button key={label as string} onClick={() => setHour(h as number)} style={{ fontFamily: "IBM Plex Mono, monospace", fontSize: 14, fontWeight: active ? 700 : 600, padding: "10px 20px", borderRadius: 12, border: "none", cursor: "pointer", background: active ? "rgba(249,115,22,0.18)" : "rgba(255,255,255,0.05)", color: active ? "#f97316" : "#94a3b8", outline: active ? "1px solid rgba(249,115,22,0.4)" : "1px solid rgba(255,255,255,0.06)", transition: "all 0.15s", whiteSpace: "nowrap" }}>
-                      {label as string}
+                    <button
+                      key={label}
+                      onClick={() => setHour(h)}
+                      style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 14, fontWeight: active ? 700 : 600, padding: '10px 20px', borderRadius: 12, border: 'none', cursor: 'pointer', background: active ? 'rgba(249,115,22,0.18)' : 'rgba(255,255,255,0.05)', color: active ? '#f97316' : '#94a3b8', outline: active ? '1px solid rgba(249,115,22,0.4)' : '1px solid rgba(255,255,255,0.06)', transition: 'all 0.15s', whiteSpace: 'nowrap' }}
+                    >
+                      {label}
                     </button>
                   );
                 })}

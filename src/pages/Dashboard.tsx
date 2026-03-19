@@ -8,7 +8,7 @@ import { indianStates } from '@/data/indiaLocations';
 import AQIGauge from '@/components/AQIGauge';
 import PollutantCard from '@/components/PollutantCard';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, Search, X, Layers } from 'lucide-react';
+import { Clock, Search, X } from 'lucide-react';
 
 // ── Map Themes ─────────────────────────────────────────────────
 const MAP_THEMES = [
@@ -204,7 +204,6 @@ const MapEvents = ({
   useMapEvents({
     click: (e) => {
       const { lat, lng } = e.latlng;
-      // Ignore clicks within ~500m of user location
       const dist = Math.hypot(lat - userCoords[0], lng - userCoords[1]);
       if (dist < 0.005) return;
       onMapClick(lat, lng);
@@ -212,6 +211,7 @@ const MapEvents = ({
   });
   return null;
 };
+
 const UserLocationMarker = ({ coords }: { coords: [number, number] }) => {
   const map = useMap();
   const markerRef = useRef<L.Marker | null>(null);
@@ -261,7 +261,7 @@ const LocateMeButton = ({ coords, onReset }: { coords: [number, number]; onReset
   );
 };
 
-// ── Theme Picker Button (inside map) ───────────────────────────
+// ── Theme Picker Button (Hotspots style) ──────────────────────
 const ThemePickerButton = ({
   activeTheme,
   onThemeChange,
@@ -272,83 +272,110 @@ const ThemePickerButton = ({
   const [open, setOpen] = useState(false);
 
   return (
-    <div
-      style={{
-        position: 'absolute', bottom: 32, left: 12, zIndex: 1000,
-        fontFamily: 'IBM Plex Mono, monospace',
-      }}
-    >
+    <div style={{ position: 'absolute', bottom: 130, right: 16, zIndex: 1000 }}>
       {/* Toggle button */}
       <button
         onClick={() => setOpen(o => !o)}
-        title="Change map style"
+        title="Map Theme"
         style={{
-          display: 'flex', alignItems: 'center', gap: 7,
-          padding: '8px 14px', borderRadius: 10,
-          background: 'rgba(10,14,20,0.92)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          color: '#e2e8f0', fontSize: 13, fontWeight: 600,
-          cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(12px)', transition: 'all 0.2s',
+          width: 44, height: 44,
+          background: open ? 'rgba(249,115,22,0.15)' : 'rgba(8,12,18,0.92)',
+          border: `1px solid ${open ? 'rgba(249,115,22,0.5)' : 'rgba(255,60,0,0.15)'}`,
+          borderRadius: 12,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer',
+          color: open ? '#f97316' : '#64748b',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+          transition: 'all 0.2s',
         }}
-        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(30,40,60,0.95)')}
-        onMouseLeave={e => (e.currentTarget.style.background = 'rgba(10,14,20,0.92)')}
+        onMouseEnter={e => {
+          if (!open) {
+            e.currentTarget.style.background = 'rgba(249,115,22,0.1)';
+            e.currentTarget.style.color = '#f97316';
+          }
+        }}
+        onMouseLeave={e => {
+          if (!open) {
+            e.currentTarget.style.background = 'rgba(8,12,18,0.92)';
+            e.currentTarget.style.color = '#64748b';
+          }
+        }}
       >
-        <Layers size={14} style={{ color: '#00d4aa' }} />
-        {activeTheme.label}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+          <polyline points="2 17 12 22 22 17" />
+          <polyline points="2 12 12 17 22 12" />
+        </svg>
       </button>
 
-      {/* Theme grid popup */}
+      {/* Theme panel */}
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, y: 8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            transition={{ duration: 0.18 }}
+            initial={{ opacity: 0, scale: 0.92, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 8 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 28 }}
             style={{
-              position: 'absolute', bottom: '110%', left: 0,
-              background: 'rgba(10,14,20,0.97)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 16, padding: 14,
-              boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+              position: 'absolute', bottom: 52, right: 0,
+              background: 'rgba(6,8,14,0.97)',
               backdropFilter: 'blur(20px)',
-              display: 'grid', gridTemplateColumns: '1fr 1fr',
-              gap: 8, minWidth: 220,
+              border: '1px solid rgba(249,115,22,0.2)',
+              borderRadius: 18,
+              padding: '16px',
+              width: 210,
+              boxShadow: '0 24px 60px rgba(0,0,0,0.9), 0 0 40px rgba(249,115,22,0.08)',
             }}
           >
-            <div style={{ gridColumn: '1/-1', fontSize: 11, color: '#475569', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4, fontWeight: 600 }}>
-              Map Style
+            <div style={{
+              fontFamily: 'IBM Plex Mono, monospace', fontSize: 11, fontWeight: 700,
+              color: '#64748b', letterSpacing: '0.12em', textTransform: 'uppercase',
+              marginBottom: 12,
+            }}>
+              Map Theme
             </div>
-            {MAP_THEMES.map(theme => {
-              const isActive = theme.id === activeTheme.id;
-              return (
-                <button
-                  key={theme.id}
-                  onClick={() => { onThemeChange(theme); setOpen(false); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '8px 10px', borderRadius: 10, cursor: 'pointer',
-                    background: isActive ? 'rgba(0,212,170,0.12)' : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${isActive ? 'rgba(0,212,170,0.4)' : 'rgba(255,255,255,0.06)'}`,
-                    color: isActive ? '#00d4aa' : '#94a3b8',
-                    fontSize: 13, fontWeight: isActive ? 600 : 400,
-                    transition: 'all 0.15s', textAlign: 'left',
-                  }}
-                  onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
-                  onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
-                >
-                  {/* Color swatch */}
-                  <div style={{
-                    width: 18, height: 18, borderRadius: 5, flexShrink: 0,
-                    background: theme.preview,
-                    border: `1px solid ${isActive ? '#00d4aa' : 'rgba(255,255,255,0.15)'}`,
-                    boxShadow: isActive ? '0 0 8px rgba(0,212,170,0.4)' : 'none',
-                  }} />
-                  {theme.label}
-                </button>
-              );
-            })}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {MAP_THEMES.map(theme => {
+                const isActive = theme.id === activeTheme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    onClick={() => { onThemeChange(theme); setOpen(false); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '9px 12px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: isActive ? 'rgba(249,115,22,0.12)' : 'rgba(255,255,255,0.03)',
+                      outline: isActive ? '1px solid rgba(249,115,22,0.4)' : '1px solid transparent',
+                      transition: 'all 0.15s', textAlign: 'left',
+                    }}
+                    onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
+                    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
+                  >
+                    <div style={{
+                      width: 28, height: 20, borderRadius: 6, flexShrink: 0,
+                      background: theme.preview,
+                      border: isActive ? '2px solid #f97316' : '1px solid rgba(255,255,255,0.1)',
+                      boxShadow: isActive ? '0 0 8px rgba(249,115,22,0.5)' : 'none',
+                      transition: 'all 0.15s',
+                    }} />
+                    <span style={{
+                      fontFamily: 'IBM Plex Mono, monospace', fontSize: 13,
+                      fontWeight: isActive ? 700 : 500,
+                      color: isActive ? '#f97316' : '#94a3b8',
+                      transition: 'color 0.15s',
+                    }}>
+                      {theme.label}
+                    </span>
+                    {isActive && (
+                      <div style={{
+                        marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%',
+                        background: '#f97316', boxShadow: '0 0 6px #f97316', flexShrink: 0,
+                      }} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -390,7 +417,6 @@ const Dashboard = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // ── Active data ────────────────────────────────────────────────
   const activeAQI  = selectedStation?.aqi  ?? liveAvgAQI ?? cityAQI;
 
   const coordMatch = (a: [number, number], b: [number, number]) =>
@@ -575,10 +601,10 @@ const Dashboard = () => {
                 setSelectedStation(null);
               }}
             />
-            <MapEvents onMapClick={handleMapClick} />
+            <MapEvents onMapClick={handleMapClick} userCoords={userCoords} />
           </MapContainer>
 
-          {/* Theme picker — sits over the map */}
+          {/* Theme picker — outside MapContainer, overlays via absolute positioning */}
           <ThemePickerButton
             activeTheme={activeTheme}
             onThemeChange={setActiveTheme}

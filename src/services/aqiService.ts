@@ -50,23 +50,42 @@ async function fetchWeatherCurrent(lat: number, lng: number) {
   return data.current;
 }
 
-async function getAreaName(lat: number, lon: number, fallback: string): Promise<string> {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
-      { headers: { 'Accept-Language': 'en' } }
-    );
-    const data = await res.json();
-    const addr = data.address || {};
-    return (
-      addr.neighbourhood || addr.suburb   || addr.village      ||
-      addr.town          || addr.city_district || addr.city    ||
-      addr.county        || addr.state_district || addr.state  ||
-      fallback
-    );
-  } catch {
-    return fallback;
+// ── Throttled Nominatim: one request at a time, 1.1s apart ───
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function getAreaNamesThrottled(
+  points: { lat: number; lon: number; fallback: string }[]
+): Promise<string[]> {
+  const results: string[] = [];
+  for (const pt of points) {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${pt.lat}&lon=${pt.lon}&format=json`,
+        { headers: { 'Accept-Language': 'en' } }
+      );
+      const data = await res.json();
+      const addr = data.address || {};
+      const name =
+        addr.neighbourhood   ||
+        addr.suburb          ||
+        addr.village         ||
+        addr.town            ||
+        addr.city_district   ||
+        addr.city            ||
+        addr.county          ||
+        addr.state_district  ||
+        addr.state           ||
+        pt.fallback;
+      results.push(name);
+    } catch {
+      results.push(pt.fallback);
+    }
+    // Wait 1.1s before next request to respect Nominatim rate limit
+    if (points.indexOf(pt) < points.length - 1) {
+      await sleep(1100);
+    }
   }
+  return results;
 }
 
 function buildStation(
@@ -147,29 +166,35 @@ export async function fetchLiveRadiusStations(
     }),
   ];
 
-  const generatedStations = await Promise.all(
-    points.map(async (pt, i) => {
-      const areaName = await getAreaName(pt.lat, pt.lng, pt.isCenter ? 'Your Area' : `Zone ${i}`);
-      const variance = pt.isCenter ? 1 : 0.85 + Math.abs(Math.sin(i * 123.4)) * 0.3;
-      const vPm25 = Math.max(0, Math.round(pm25 * variance));
-      return {
-        id:       pt.id,
-        name:     areaName,
-        lat:      pt.lat,
-        lng:      pt.lng,
-        aqi:      pm25ToAqi(vPm25),
-        pm25:     vPm25,
-        pm10:     Math.max(0, Math.round(pm10 * variance)),
-        no2:      Math.max(0, Math.round(no2  * variance)),
-        co:       +((co * variance) / 1000).toFixed(2),
-        o3:       Math.max(0, Math.round(o3   * variance)),
-        so2:      Math.max(0, Math.round(so2  * variance)),
-        temp:     weather?.temperature_2m       ?? 0,
-        humidity: weather?.relative_humidity_2m ?? 0,
-        trend:    (variance > 1 ? 'up' : 'down') as 'up' | 'down',
-      };
-    })
+  // ── Fetch all names throttled (1 per second) ──────────────
+  const areaNames = await getAreaNamesThrottled(
+    points.map((pt, i) => ({
+      lat:      pt.lat,
+      lon:      pt.lng,
+      fallback: pt.isCenter ? 'Your Area' : `Area ${i}`,
+    }))
   );
+
+  const generatedStations: SensorStation[] = points.map((pt, i) => {
+    const variance = pt.isCenter ? 1 : 0.85 + Math.abs(Math.sin(i * 123.4)) * 0.3;
+    const vPm25 = Math.max(0, Math.round(pm25 * variance));
+    return {
+      id:       pt.id,
+      name:     areaNames[i],
+      lat:      pt.lat,
+      lng:      pt.lng,
+      aqi:      pm25ToAqi(vPm25),
+      pm25:     vPm25,
+      pm10:     Math.max(0, Math.round(pm10 * variance)),
+      no2:      Math.max(0, Math.round(no2  * variance)),
+      co:       +((co * variance) / 1000).toFixed(2),
+      o3:       Math.max(0, Math.round(o3   * variance)),
+      so2:      Math.max(0, Math.round(so2  * variance)),
+      temp:     weather?.temperature_2m       ?? 0,
+      humidity: weather?.relative_humidity_2m ?? 0,
+      trend:    (variance > 1 ? 'up' : 'down') as 'up' | 'down',
+    };
+  });
 
   const avgAQI = Math.round(
     generatedStations.reduce((s, x) => s + x.aqi, 0) / generatedStations.length
@@ -212,7 +237,7 @@ export async function fetchStationByCoords(
   const [aq, weather, areaName] = await Promise.all([
     fetchOpenMeteo(lat, lng),
     fetchWeatherCurrent(lat, lng),
-    getAreaName(lat, lng, 'Selected Location'),
+    getAreaNamesThrottled([{ lat, lon: lng, fallback: 'Selected Location' }]).then(r => r[0]),
   ]);
   const pm25 = aq?.pm2_5 ?? 0;
   return {
