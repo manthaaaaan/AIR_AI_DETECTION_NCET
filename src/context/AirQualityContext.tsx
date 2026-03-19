@@ -6,6 +6,20 @@ import {
   fetchAllCityStations,
 } from '@/services/aqiService';
 
+// ── OWM AQI label map ──────────────────────────────────────────
+const OWM_LABEL = ['', 'Good', 'Fair', 'Moderate', 'Poor', 'Very Poor'];
+
+interface OWMAirData {
+  currentAQI: number;
+  currentLabel: string;
+  pm25: number;
+  pm10: number;
+  o3: number;
+  no2: number;
+  past: { hour: string; aqi: number; label: string; pm25: string }[];
+  forecast: { hour: string; aqi: number; label: string; pm25: string }[];
+}
+
 interface AirQualityContextType {
   stations: SensorStation[];
   selectedStation: SensorStation | null;
@@ -24,6 +38,8 @@ interface AirQualityContextType {
   handleMapClick: (lat: number, lng: number) => Promise<void>;
   addSearchedLocation: (lat: number, lng: number, name: string) => Promise<void>;
   allCityStations: SensorStation[];
+  owmAir: OWMAirData | null;
+  owmLoading: boolean;
 }
 
 const AirQualityContext = createContext<AirQualityContextType | null>(null);
@@ -52,6 +68,64 @@ async function reverseGeocode(lat: number, lon: number): Promise<string> {
   }
 }
 
+// ── Fetch OWM air pollution — current + history + forecast ─────
+async function fetchOWMAir(lat: number, lon: number): Promise<OWMAirData | null> {
+  const key = import.meta.env.VITE_OWM_API_KEY;
+  if (!key) return null;
+
+  const nowTs   = Math.floor(Date.now() / 1000);
+  const startTs = nowTs - 24 * 3600;
+
+  try {
+    const [curRes, histRes, foreRes] = await Promise.all([
+      fetch(`/owm/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${key}`),
+      fetch(`/owm/data/2.5/air_pollution/history?lat=${lat}&lon=${lon}&start=${startTs}&end=${nowTs}&appid=${key}`),
+      fetch(`/owm/data/2.5/air_pollution/forecast?lat=${lat}&lon=${lon}&appid=${key}`),
+    ]);
+
+    const [cur, hist, fore] = await Promise.all([
+      curRes.json(), histRes.json(), foreRes.json(),
+    ]);
+
+    const curItem = cur?.list?.[0];
+    if (!curItem) return null;
+
+    const past = (hist?.list || [])
+      .filter((_: any, i: number) => i % 3 === 0)
+      .slice(-8)
+      .map((item: any) => ({
+        hour:  new Date(item.dt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        aqi:   item.main.aqi,
+        label: OWM_LABEL[item.main.aqi] || 'Unknown',
+        pm25:  item.components?.pm2_5?.toFixed(1) ?? '—',
+      }));
+
+    const forecast = (fore?.list || [])
+      .filter((_: any, i: number) => i % 3 === 0)
+      .slice(0, 8)
+      .map((item: any) => ({
+        hour:  new Date(item.dt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        aqi:   item.main.aqi,
+        label: OWM_LABEL[item.main.aqi] || 'Unknown',
+        pm25:  item.components?.pm2_5?.toFixed(1) ?? '—',
+      }));
+
+    return {
+      currentAQI:   curItem.main.aqi,
+      currentLabel: OWM_LABEL[curItem.main.aqi] || 'Unknown',
+      pm25:  curItem.components?.pm2_5  ?? 0,
+      pm10:  curItem.components?.pm10   ?? 0,
+      o3:    curItem.components?.o3     ?? 0,
+      no2:   curItem.components?.no2    ?? 0,
+      past,
+      forecast,
+    };
+  } catch (e) {
+    console.error('OWM air fetch failed:', e);
+    return null;
+  }
+}
+
 export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [liveStations,     setLiveStations]     = useState<SensorStation[]>([]);
   const [searchedStations, setSearchedStations] = useState<SensorStation[]>([]);
@@ -65,6 +139,8 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [viewCoords,       setViewCoords]       = useState<[number, number]>([22.5, 82.0]);
   const [locationStatus,   setLocationStatus]   = useState<'idle' | 'loading' | 'granted' | 'denied'>('idle');
   const [dataLoading,      setDataLoading]      = useState(false);
+  const [owmAir,           setOwmAir]           = useState<OWMAirData | null>(null);
+  const [owmLoading,       setOwmLoading]       = useState(false);
 
   const stations = [
     ...initialStations.filter(s => s.id.startsWith('init-')),
@@ -72,7 +148,7 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ...searchedStations,
   ];
 
-  // ── Fetch live radius stations ──────────────────────────────────────────
+  // ── Fetch live radius stations ─────────────────────────────────────────
   const fetchLiveArea = async (lat: number, lng: number) => {
     setDataLoading(true);
     try {
@@ -87,7 +163,18 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   };
 
-  // ── Fetch all 22 city stations in parallel ──────────────────────────────
+  // ── Fetch OWM air data ─────────────────────────────────────────────────
+  const fetchOWM = async (lat: number, lon: number) => {
+    setOwmLoading(true);
+    try {
+      const data = await fetchOWMAir(lat, lon);
+      setOwmAir(data);
+    } finally {
+      setOwmLoading(false);
+    }
+  };
+
+  // ── Fetch all city stations ────────────────────────────────────────────
   useEffect(() => {
     const load = () => {
       fetchAllCityStations()
@@ -99,7 +186,7 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return () => clearInterval(t);
   }, []);
 
-  // ── Geolocation init ────────────────────────────────────────────────────
+  // ── Geolocation init ───────────────────────────────────────────────────
   useEffect(() => {
     const fetchWithIpFallback = async () => {
       try {
@@ -119,7 +206,10 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setViewCoords([latitude, longitude]);
       const name = nameFallback || await reverseGeocode(latitude, longitude);
       setCityName(name);
-      await fetchLiveArea(latitude, longitude);
+      await Promise.all([
+        fetchLiveArea(latitude, longitude),
+        fetchOWM(latitude, longitude),
+      ]);
     };
 
     const handleError = async () => {
@@ -141,17 +231,17 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     );
   }, []);
 
-  // ── Periodic refresh of live area ───────────────────────────────────────
+  // ── Periodic refresh ───────────────────────────────────────────────────
   useEffect(() => {
     if (locationStatus !== 'granted') return;
-    const interval = setInterval(
-      () => fetchLiveArea(userCoords[0], userCoords[1]),
-      10 * 60 * 1000
-    );
+    const interval = setInterval(() => {
+      fetchLiveArea(userCoords[0], userCoords[1]);
+      fetchOWM(userCoords[0], userCoords[1]);
+    }, 10 * 60 * 1000);
     return () => clearInterval(interval);
   }, [locationStatus, userCoords]);
 
-  // ── Alerts ──────────────────────────────────────────────────────────────
+  // ── Alerts ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const newAlerts = liveStations
       .filter(s => s.aqi > 100)
@@ -166,7 +256,12 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const dismissAlert = (id: string) => setAlerts(prev => prev.filter(a => a.id !== id));
 
-  const cityAQI = liveStations.length ? liveAvgAQI : 0;
+  // ── cityAQI — derive from OWM pm25 if available ────────────────────────
+  const owmAQIConverted = owmAir
+    ? Math.min(500, Math.round((owmAir.pm25 / 250) * 500))
+    : null;
+
+  const cityAQI = owmAQIConverted ?? (liveStations.length ? liveAvgAQI : 0);
 
   const handleMapClick = async (lat: number, lng: number) => {
     setDataLoading(true);
@@ -209,6 +304,7 @@ export const AirQualityProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       dataLoading, setViewCoords,
       handleMapClick, addSearchedLocation,
       allCityStations,
+      owmAir, owmLoading,
     }}>
       {children}
     </AirQualityContext.Provider>

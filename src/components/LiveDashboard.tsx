@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LineChart, Line, Area, AreaChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { Area, AreaChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { MapPin, Activity, Sun, ShieldAlert, Wind, Loader2, Navigation, Droplets } from 'lucide-react';
+import { useAirQuality } from '@/context/AirQualityContext';
 
-// ── Categories — renamed to feel technical & premium ──────────
+// ── Categories ─────────────────────────────────────────────────
 const CATEGORIES = [
   {
     id: 'overall',
@@ -81,7 +82,7 @@ const LiveTooltip = ({ active, payload, label, color, unit }: any) => {
   );
 };
 
-// ── Trailing live tip — SVG overlay drawn over recharts ──────
+// ── Trailing live tip ──────────────────────────────────────────
 const TrailingLine = ({ data, color, domain }: {
   data: DataPoint[];
   color: string;
@@ -100,7 +101,6 @@ const TrailingLine = ({ data, color, domain }: {
   const px = (i: number) => padL + ((totalPoints - TAIL + i) / (totalPoints - 1)) * cW;
   const py = (v: number) => padT + cH - ((v - dMin) / (dMax - dMin)) * cH;
 
-  // Build smooth path for the whole tail
   const pathD = tail.map((pt, i) => `${i === 0 ? 'M' : 'L'}${px(i).toFixed(2)},${py(pt.value).toFixed(2)}`).join(' ');
 
   return (
@@ -109,8 +109,7 @@ const TrailingLine = ({ data, color, domain }: {
       viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
     >
       <defs>
-        {/* Horizontal fade — transparent at left, solid at right */}
-        <linearGradient id={`trailFade-${color.replace('#','')}`} x1="0" y1="0" x2="1" y2="0">
+        <linearGradient id={`trailFade-${color.replace('#', '')}`} x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%" stopColor={color} stopOpacity="0" />
           <stop offset="40%" stopColor={color} stopOpacity="0.25" />
           <stop offset="75%" stopColor={color} stopOpacity="0.7" />
@@ -130,22 +129,16 @@ const TrailingLine = ({ data, color, domain }: {
         </filter>
       </defs>
 
-      {/* Layer 1 — thick blurred glow trail */}
       <path d={pathD} fill="none" stroke={color} strokeWidth={8}
         strokeOpacity={0.12} strokeLinecap="round" strokeLinejoin="round"
         filter="url(#trailGlowHeavy)" />
-
-      {/* Layer 2 — medium glow */}
       <path d={pathD} fill="none" stroke={color} strokeWidth={5}
         strokeOpacity={0.2} strokeLinecap="round" strokeLinejoin="round"
         filter="url(#trailGlow)" />
-
-      {/* Layer 3 — bright core with gradient fade */}
       <path d={pathD} fill="none"
-        stroke={`url(#trailFade-${color.replace('#','')})`}
+        stroke={`url(#trailFade-${color.replace('#', '')})`}
         strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
 
-      {/* Individual fading segments for extra punch */}
       {tail.slice(0, -1).map((pt, i) => {
         const next = tail[i + 1];
         const progress = (i + 1) / (TAIL - 1);
@@ -153,14 +146,13 @@ const TrailingLine = ({ data, color, domain }: {
         const strokeW = 1 + progress * 4;
         return (
           <line key={i}
-            x1={px(i)} y1={py(pt.value)} x2={px(i+1)} y2={py(next.value)}
+            x1={px(i)} y1={py(pt.value)} x2={px(i + 1)} y2={py(next.value)}
             stroke={color} strokeWidth={strokeW} strokeOpacity={opacity}
             strokeLinecap="round" filter={progress > 0.7 ? 'url(#trailGlow)' : undefined}
           />
         );
       })}
 
-      {/* Tip — triple ring pulse */}
       {(() => {
         const tip = tail[tail.length - 1];
         const tx = px(tail.length - 1);
@@ -180,6 +172,8 @@ const TrailingLine = ({ data, color, domain }: {
 
 // ── Main ──────────────────────────────────────────────────────
 export const LiveDashboard = () => {
+  const { owmAir } = useAirQuality();
+
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState(CATEGORIES[0]);
@@ -189,36 +183,53 @@ export const LiveDashboard = () => {
   const [flash, setFlash] = useState(false);
   const [tick, setTick] = useState(0);
 
-  const generateNextValue = useCallback((category: typeof CATEGORIES[0], prevValue: number) => {
+  // ── Seed value from real OWM data ────────────────────────────
+  const getRealInitVal = useCallback((categoryId: string): number => {
+    if (!owmAir) return CATEGORIES.find(c => c.id === categoryId)?.initVal ?? 50;
+    switch (categoryId) {
+      case 'overall':   return Math.min(200, Math.round((owmAir.pm25 / 250) * 500));
+      case 'pollution': return Math.min(200, Math.round(owmAir.pm25));
+      default:          return CATEGORIES.find(c => c.id === categoryId)?.initVal ?? 50;
+    }
+  }, [owmAir]);
+
+  // ── Generate next value (small random walk from real seed) ───
+  const generateNextValue = useCallback((category: typeof CATEGORIES[0], prevValue: number): number => {
     const change = (Math.random() - 0.48) * (category.id === 'uv' ? 0.4 : category.id === 'virus' ? 2 : 5);
     let v = prevValue + change;
     v = Math.max(category.yAxisDomain[0], Math.min(category.yAxisDomain[1], v));
     return Math.round(v * 10) / 10;
   }, []);
 
-  // Init data on category change
+  // ── Init data on category change or when OWM data arrives ────
   useEffect(() => {
+    const seed = getRealInitVal(activeCategory.id);
     const init: DataPoint[] = [];
-    let cur = activeCategory.initVal;
+    let cur = seed;
     for (let i = 30; i >= 0; i--) {
-      const t = new Date(Date.now() - i * 2000).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const t = new Date(Date.now() - i * 2000).toLocaleTimeString([], {
+        hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
       init.push({ time: t, value: cur });
       cur = generateNextValue(activeCategory, cur);
     }
     setData(init);
     setLatestVal(cur);
-  }, [activeCategory, generateNextValue]);
+  }, [activeCategory, generateNextValue, getRealInitVal, owmAir]);
 
-  // Live tick every 2s
+  // ── Live tick every 2s ───────────────────────────────────────
   useEffect(() => {
     const interval = setInterval(() => {
       setData(prev => {
         const last = prev[prev.length - 1]?.value ?? activeCategory.initVal;
         const next = generateNextValue(activeCategory, last);
-        const t = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const t = new Date().toLocaleTimeString([], {
+          hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+        });
         setTrend(next > last + 0.5 ? 'up' : next < last - 0.5 ? 'down' : 'stable');
         setLatestVal(next);
-        setFlash(true); setTimeout(() => setFlash(false), 400);
+        setFlash(true);
+        setTimeout(() => setFlash(false), 400);
         setTick(t => t + 1);
         return [...prev.slice(1), { time: t, value: next }];
       });
@@ -226,18 +237,24 @@ export const LiveDashboard = () => {
     return () => clearInterval(interval);
   }, [activeCategory, generateNextValue]);
 
-  // Geolocation
+  // ── Geolocation ──────────────────────────────────────────────
   useEffect(() => {
     if (!navigator.geolocation) { setLocationError('unavailable'); return; }
-    const ok = (p: GeolocationPosition) => { setLocation({ lat: p.coords.latitude, lng: p.coords.longitude }); setLocationError(null); };
-    const err = () => { setLocationError('denied'); setLocation({ lat: 12.9716, lng: 77.5946 }); };
+    const ok = (p: GeolocationPosition) => {
+      setLocation({ lat: p.coords.latitude, lng: p.coords.longitude });
+      setLocationError(null);
+    };
+    const err = () => {
+      setLocationError('denied');
+      setLocation({ lat: 12.9716, lng: 77.5946 });
+    };
     navigator.geolocation.getCurrentPosition(ok, err);
     const id = navigator.geolocation.watchPosition(ok, err, { enableHighAccuracy: true });
     return () => navigator.geolocation.clearWatch(id);
   }, []);
 
   const trendColor = trend === 'up' ? '#ef4444' : trend === 'down' ? '#00d4aa' : '#64748b';
-  const trendIcon = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '→';
+  const trendIcon  = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '→';
 
   return (
     <div style={{
@@ -247,7 +264,6 @@ export const LiveDashboard = () => {
       padding: '28px 28px 24px',
       fontFamily: 'IBM Plex Mono, monospace',
     }}>
-
       {/* ── Header ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28, flexWrap: 'wrap', gap: 14 }}>
         <div>
@@ -258,7 +274,6 @@ export const LiveDashboard = () => {
             <h2 style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: 31, fontWeight: 700, color: '#e2e8f0', margin: 0, letterSpacing: '0.03em' }}>
               Live Environmental Monitor
             </h2>
-            {/* Live pulse */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 99, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}>
               <motion.div animate={{ opacity: [1, 0.2, 1] }} transition={{ duration: 1.2, repeat: Infinity }}
                 style={{ width: 5, height: 5, borderRadius: '50%', background: '#ef4444' }} />
@@ -267,6 +282,11 @@ export const LiveDashboard = () => {
           </div>
           <p style={{ fontSize: 18, color: '#334155', margin: 0, letterSpacing: '0.04em' }}>
             Real-time atmospheric readings · 2s resolution · 10 km radius
+            {owmAir && (
+              <span style={{ color: '#00d4aa', marginLeft: 8 }}>
+                · OWM seed: PM2.5 {owmAir.pm25.toFixed(1)}µg/m³
+              </span>
+            )}
           </p>
         </div>
 
@@ -338,7 +358,6 @@ export const LiveDashboard = () => {
               </div>
             </div>
 
-            {/* Live value readout */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 15, color: '#334155', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 2 }}>Current</div>
@@ -353,9 +372,7 @@ export const LiveDashboard = () => {
             </div>
           </div>
 
-          {/* Scan line + pulse dot overlay */}
           <div style={{ position: 'relative' }}>
-            {/* Flash border on new data */}
             <motion.div
               animate={{ opacity: flash ? 1 : 0 }}
               transition={{ duration: 0.35 }}
@@ -378,10 +395,6 @@ export const LiveDashboard = () => {
                     <feGaussianBlur stdDeviation="2.5" result="blur" />
                     <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                   </filter>
-                  <filter id="dotGlow">
-                    <feGaussianBlur stdDeviation="4" result="blur" />
-                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                  </filter>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(100,130,160,0.07)" vertical={false} />
                 <XAxis dataKey="time"
@@ -402,7 +415,6 @@ export const LiveDashboard = () => {
                   />
                 ))}
 
-                {/* Gradient area fill */}
                 <Area
                   type="monotone" dataKey="value"
                   stroke={activeCategory.color} strokeWidth={2.5}
@@ -414,11 +426,10 @@ export const LiveDashboard = () => {
                 />
               </AreaChart>
             </ResponsiveContainer>
-            {/* Trailing live tip overlay */}
             <TrailingLine data={data} color={activeCategory.color} domain={activeCategory.yAxisDomain} />
           </div>
 
-          {/* Live pulse indicator row */}
+          {/* Live pulse indicator */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 48, marginTop: 6 }}>
             <motion.div
               animate={{ scale: [1, 1.6, 1], opacity: [0.8, 0.2, 0.8] }}
@@ -439,7 +450,7 @@ export const LiveDashboard = () => {
             </motion.div>
           </div>
 
-          {/* Bottom ref legend */}
+          {/* Legend */}
           <div style={{ display: 'flex', gap: 18, paddingLeft: 42, marginTop: 8, flexWrap: 'wrap' }}>
             {activeCategory.refLines.map(r => (
               <div key={r.v} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -450,6 +461,8 @@ export const LiveDashboard = () => {
           </div>
         </motion.div>
       </AnimatePresence>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };

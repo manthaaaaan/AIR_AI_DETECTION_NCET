@@ -3,12 +3,12 @@ import { motion } from 'framer-motion';
 import { useAirQuality } from '@/context/AirQualityContext';
 import { getAQICategory, getAQIColor, hourlyAQIData } from '@/data/mockSensorData';
 import {
-  Heart, Download, TrendingUp, Clock, Send,
+  Heart, Download, TrendingUp, Send,
   Bot, User, Sparkles, Wind,
   Thermometer,
 } from 'lucide-react';
 
-// ── Types ─────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -17,10 +17,10 @@ interface ChatMessage {
 // ── Quick prompts ──────────────────────────────────────────────
 const QUICK_PROMPTS = [
   "Is it safe to go for a run today?",
+  "What was AQI like last night?",
+  "Will air quality improve tonight?",
   "What mask should I wear outside?",
-  "How does PM2.5 affect my lungs?",
   "Best time to open windows today?",
-  "Tips for kids going to school?",
   "Should I use an air purifier?",
 ];
 
@@ -48,7 +48,8 @@ const ChatBubble = ({ msg }: { msg: ChatMessage }) => {
         background: isUser ? '#00b38f' : 'rgba(30,45,65,0.9)',
         border: isUser ? 'none' : '1px solid rgba(100,130,160,0.18)',
         boxShadow: isUser ? '0 2px 8px rgba(0,179,143,0.3)' : '0 1px 6px rgba(0,0,0,0.2)',
-        fontFamily: 'Inter, system-ui, sans-serif', fontSize: 15, color: isUser ? '#ffffff' : '#cbd5e1', lineHeight: 1.75,
+        fontFamily: 'Inter, system-ui, sans-serif', fontSize: 15,
+        color: isUser ? '#ffffff' : '#cbd5e1', lineHeight: 1.75,
         whiteSpace: 'pre-wrap', letterSpacing: '0.01em',
       }}>
         {msg.content}
@@ -78,7 +79,7 @@ const TypingIndicator = () => (
   </div>
 );
 
-// ── AQI Chart ─────────────────────────────────────────────────
+// ── AQI Chart ──────────────────────────────────────────────────
 const AQIChart = ({ cityName }: { cityName: string }) => {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -127,83 +128,33 @@ const AQIChart = ({ cityName }: { cityName: string }) => {
         </div>
       </div>
 
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`}
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`}
         style={{ width: '100%', height: 'auto', overflow: 'visible', cursor: 'crosshair' }}
-        onMouseMove={handleMouseMove}
-        onMouseLeave={() => setHoverIdx(null)}
-      >
+        onMouseMove={handleMouseMove} onMouseLeave={() => setHoverIdx(null)}>
         <defs>
           <linearGradient id="aqiGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#00d4aa" stopOpacity="0.35" />
             <stop offset="100%" stopColor="#00d4aa" stopOpacity="0.02" />
           </linearGradient>
-          <filter id="glow">
-            <feGaussianBlur stdDeviation="2.5" result="blur" />
-            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
-          <filter id="glowStrong">
-            <feGaussianBlur stdDeviation="4" result="blur" />
-            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
+          <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+          <filter id="glowStrong"><feGaussianBlur stdDeviation="4" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
         </defs>
-
-        {thresholds.map(t => {
-          const ty = y(t.v);
-          if (ty < padT || ty > padT + cH) return null;
-          return (
-            <g key={t.v}>
-              <line x1={padL} y1={ty} x2={W - padR} y2={ty} stroke={getAQIColor(t.v)} strokeWidth="0.5" strokeDasharray="4 4" opacity="0.35" />
-              <text x={W - padR + 4} y={ty + 4} fontSize="9" fill={getAQIColor(t.v)} opacity="0.6">{t.label}</text>
-            </g>
-          );
-        })}
-
-        {[minV, Math.round((minV + maxV) / 2), maxV].map(v => (
-          <text key={v} x={padL - 6} y={y(v) + 4} fontSize="9" fill="#334155" textAnchor="end">{Math.round(v)}</text>
-        ))}
-
-        {hourlyAQIData.filter((_, i) => i % 3 === 0).map((d, i) => (
-          <text key={i} x={x(i * 3)} y={H - 4} fontSize="9" fill={hi === i * 3 ? '#94a3b8' : '#334155'} textAnchor="middle"
-            style={{ transition: 'fill 0.15s' }}>{d.hour}</text>
-        ))}
-
+        {thresholds.map(t => { const ty = y(t.v); if (ty < padT || ty > padT + cH) return null; return (<g key={t.v}><line x1={padL} y1={ty} x2={W - padR} y2={ty} stroke={getAQIColor(t.v)} strokeWidth="0.5" strokeDasharray="4 4" opacity="0.35" /><text x={W - padR + 4} y={ty + 4} fontSize="9" fill={getAQIColor(t.v)} opacity="0.6">{t.label}</text></g>); })}
+        {[minV, Math.round((minV + maxV) / 2), maxV].map(v => (<text key={v} x={padL - 6} y={y(v) + 4} fontSize="9" fill="#334155" textAnchor="end">{Math.round(v)}</text>))}
+        {hourlyAQIData.filter((_, i) => i % 3 === 0).map((d, i) => (<text key={i} x={x(i * 3)} y={H - 4} fontSize="9" fill={hi === i * 3 ? '#94a3b8' : '#334155'} textAnchor="middle" style={{ transition: 'fill 0.15s' }}>{d.hour}</text>))}
         <path d={area} fill="url(#aqiGrad)" />
         <path d={line} fill="none" stroke="#00d4aa" strokeWidth="2" strokeLinejoin="round" filter="url(#glow)" />
-
-        {vals.filter((_, i) => i % 3 === 0).map((v, i) => (
-          <circle key={i} cx={x(i * 3)} cy={y(v)} r={hi === i * 3 ? 0 : 3}
-            fill={getAQIColor(v)} stroke="rgba(6,8,14,0.8)" strokeWidth="1.5" />
-        ))}
-
-        {hoverIdx === null && (
-          <g>
-            <line x1={x(now)} y1={padT} x2={x(now)} y2={padT + cH} stroke="#e2e8f0" strokeWidth="1" strokeDasharray="3 3" opacity="0.25" />
-            <rect x={x(now) - 18} y={padT - 2} width="36" height="14" rx="4" fill="rgba(6,8,14,0.8)" stroke="rgba(255,255,255,0.08)" strokeWidth="0.5" />
-            <text x={x(now)} y={padT + 8} fontSize="8" fill="#64748b" textAnchor="middle">NOW</text>
-          </g>
-        )}
-
-        <line x1={hX} y1={padT} x2={hX} y2={padT + cH}
-          stroke={hColor} strokeWidth="1" strokeDasharray="4 3" opacity="0.6"
-          style={{ transition: 'all 0.05s' }} />
-        <circle cx={hX} cy={hY} r="10" fill={hColor} opacity="0.12" filter="url(#glowStrong)"
-          style={{ transition: 'all 0.05s' }} />
-        <circle cx={hX} cy={hY} r="6" fill="none" stroke={hColor} strokeWidth="1.5" opacity="0.5"
-          style={{ transition: 'all 0.05s' }} />
-        <circle cx={hX} cy={hY} r="4" fill={hColor} stroke="rgba(6,8,14,0.9)" strokeWidth="2"
-          filter="url(#glow)" style={{ transition: 'all 0.05s' }} />
-
+        {vals.filter((_, i) => i % 3 === 0).map((v, i) => (<circle key={i} cx={x(i * 3)} cy={y(v)} r={hi === i * 3 ? 0 : 3} fill={getAQIColor(v)} stroke="rgba(6,8,14,0.8)" strokeWidth="1.5" />))}
+        {hoverIdx === null && (<g><line x1={x(now)} y1={padT} x2={x(now)} y2={padT + cH} stroke="#e2e8f0" strokeWidth="1" strokeDasharray="3 3" opacity="0.25" /><rect x={x(now) - 18} y={padT - 2} width="36" height="14" rx="4" fill="rgba(6,8,14,0.8)" stroke="rgba(255,255,255,0.08)" strokeWidth="0.5" /><text x={x(now)} y={padT + 8} fontSize="8" fill="#64748b" textAnchor="middle">NOW</text></g>)}
+        <line x1={hX} y1={padT} x2={hX} y2={padT + cH} stroke={hColor} strokeWidth="1" strokeDasharray="4 3" opacity="0.6" style={{ transition: 'all 0.05s' }} />
+        <circle cx={hX} cy={hY} r="10" fill={hColor} opacity="0.12" filter="url(#glowStrong)" style={{ transition: 'all 0.05s' }} />
+        <circle cx={hX} cy={hY} r="6" fill="none" stroke={hColor} strokeWidth="1.5" opacity="0.5" style={{ transition: 'all 0.05s' }} />
+        <circle cx={hX} cy={hY} r="4" fill={hColor} stroke="rgba(6,8,14,0.9)" strokeWidth="2" filter="url(#glow)" style={{ transition: 'all 0.05s' }} />
         <g style={{ transition: 'all 0.05s' }}>
-          <rect x={tooltipX} y={hY - 28} width={80} height={22} rx="6"
-            fill="rgba(6,8,14,0.92)" stroke={hColor} strokeWidth="0.8" opacity="0.95" />
-          <text x={tooltipX + 40} y={hY - 20} fontSize="9" fill="#64748b" textAnchor="middle"
-            fontFamily="IBM Plex Mono, monospace">{hourlyAQIData[hi].hour}</text>
-          <text x={tooltipX + 40} y={hY - 10} fontSize="10" fill={hColor} textAnchor="middle"
-            fontFamily="IBM Plex Mono, monospace" fontWeight="700">AQI {vals[hi]}</text>
+          <rect x={tooltipX} y={hY - 28} width={80} height={22} rx="6" fill="rgba(6,8,14,0.92)" stroke={hColor} strokeWidth="0.8" opacity="0.95" />
+          <text x={tooltipX + 40} y={hY - 20} fontSize="9" fill="#64748b" textAnchor="middle" fontFamily="IBM Plex Mono, monospace">{hourlyAQIData[hi].hour}</text>
+          <text x={tooltipX + 40} y={hY - 10} fontSize="10" fill={hColor} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontWeight="700">AQI {vals[hi]}</text>
         </g>
-
         <rect x={padL} y={padT} width={cW} height={cH} fill="transparent" />
       </svg>
 
@@ -221,44 +172,75 @@ const AQIChart = ({ cityName }: { cityName: string }) => {
 
 // ── Main Advisory ──────────────────────────────────────────────
 const Advisory = () => {
-  const { cityAQI, stations, alerts, cityName } = useAirQuality();
+  const { cityAQI, stations, alerts, cityName, owmAir, owmLoading } = useAirQuality();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [chatStarted, setChatStarted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const displayName = (name: string) => !name || name === 'Current Location' ? cityName : name;
+  const owmCurrent = owmAir ? {
+    aqi: owmAir.currentAQI,
+    label: owmAir.currentLabel,
+    components: { pm2_5: owmAir.pm25, pm10: owmAir.pm10, o3: owmAir.o3, no2: owmAir.no2 },
+  } : null;
+  const owmPast     = owmAir?.past     ?? [];
+  const owmForecast = owmAir?.forecast ?? [];
 
+  const displayName = (name: string) => !name || name === 'Current Location' ? cityName : name;
   const localStations = stations.filter(s => !s.id.startsWith('init-'));
   const targetStations = localStations.length > 0 ? localStations : stations;
-  const peakStation = [...targetStations].sort((a, b) => b.aqi - a.aqi)[0] || { name: 'N/A', aqi: 0 };
-  const lowestStation = [...targetStations].sort((a, b) => a.aqi - b.aqi)[0] || { name: 'N/A', aqi: 0 };
+  const peakStation    = [...targetStations].sort((a, b) => b.aqi - a.aqi)[0] || { name: 'N/A', aqi: 0 };
+  const lowestStation  = [...targetStations].sort((a, b) => a.aqi - b.aqi)[0] || { name: 'N/A', aqi: 0 };
   const cat = getAQICategory(cityAQI);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  const buildSystemPrompt = () => `
-You are AeroSense AI, a friendly and concise air quality health advisor embedded in the AeroSense air quality monitoring app.
+  const buildSystemPrompt = () => {
+    const pastSummary = owmPast.length > 0
+      ? owmPast.map(p => `  ${p.hour}: AQI ${p.aqi} (${p.label}), PM2.5 ${p.pm25}µg/m³`).join('\n')
+      : hourlyAQIData.slice(0, 8).map(d => `  ${d.hour}: AQI ${d.aqi}`).join('\n');
 
-Current air quality data for the user's location (${cityName}):
-- Overall AQI: ${cityAQI} (${cat.label})
+    const forecastSummary = owmForecast.length > 0
+      ? owmForecast.map(f => `  ${f.hour}: AQI ${f.aqi} (${f.label}), PM2.5 ${f.pm25}µg/m³`).join('\n')
+      : 'Not available';
+
+    const currentSummary = owmCurrent
+      ? `AQI ${owmCurrent.aqi} (${owmCurrent.label}) — PM2.5: ${owmCurrent.components.pm2_5.toFixed(1)}µg/m³, PM10: ${owmCurrent.components.pm10.toFixed(1)}µg/m³, O3: ${owmCurrent.components.o3.toFixed(1)}µg/m³, NO2: ${owmCurrent.components.no2.toFixed(1)}µg/m³`
+      : `AQI ${cityAQI} (${cat.label})`;
+
+    return `
+You are AeroSense AI, a friendly and knowledgeable air quality health advisor.
+
+Location: ${cityName}
+Data source: OpenWeatherMap Air Pollution API (real-time)
+
+CURRENT AIR QUALITY:
+${currentSummary}
 - Peak zone: ${displayName(peakStation.name)} at AQI ${peakStation.aqi}
 - Cleanest zone: ${displayName(lowestStation.name)} at AQI ${lowestStation.aqi}
 - Active alerts: ${alerts.length > 0 ? alerts.map(a => `${displayName(a.stationName)} AQI ${a.aqi}`).join(', ') : 'None'}
-- Dominant pollutant: PM2.5
 
-Your role:
-- Answer questions about air quality, health impacts, and protective measures
-- Give specific, actionable advice based on the CURRENT AQI data above
+PAST 24 HOURS (real data):
+${pastSummary}
+
+FORECAST NEXT 24 HOURS (real data):
+${forecastSummary}
+
+YOUR ROLE:
+- Answer questions about PAST, CURRENT, and FUTURE air quality using the real data above
+- When asked "what was AQI at X time" → look at PAST data and answer specifically
+- When asked "will it get better/worse" → look at FORECAST data and answer specifically
+- When asked "what's AQI now" → use CURRENT data
+- Give specific, actionable health advice based on the data
 - Be concise — 3-5 sentences max unless detail is needed
 - Be warm, not clinical. Think "knowledgeable friend" not "medical pamphlet"
-- When relevant, reference the actual AQI number and location
 - Never give medical diagnoses. Suggest consulting a doctor for serious conditions.
 - If asked about unrelated topics, gently redirect to air quality / health
-  `.trim();
+    `.trim();
+  };
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || loading) return;
@@ -315,9 +297,6 @@ Your role:
         .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
         .chat-input:focus { border-color: rgba(0,179,143,0.5) !important; outline: none; }
         .chat-input::placeholder { color: rgba(100,130,160,0.55); }
-        @keyframes shimmer { 0% { opacity: 0.4; } 50% { opacity: 0.7; } 100% { opacity: 0.4; } }
-        .skeleton { animation: shimmer 1.4s ease-in-out infinite; }
-
         .adv-bg {
           position: fixed; inset: 0; z-index: 0; overflow: hidden;
           background:
@@ -325,10 +304,7 @@ Your role:
             radial-gradient(ellipse 70% 50% at 90% 80%, #071428 0%, transparent 60%),
             #050810;
         }
-        .adv-orb {
-          position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.9;
-          animation: orb-drift linear infinite;
-        }
+        .adv-orb { position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.9; animation: orb-drift linear infinite; }
         .adv-orb-1 { width:750px; height:750px; top:-200px; left:-150px; background:radial-gradient(circle,rgba(0,212,170,0.75) 0%,rgba(0,180,140,0.35) 40%,transparent 70%); animation-duration:18s; }
         .adv-orb-2 { width:650px; height:650px; bottom:-150px; right:-100px; background:radial-gradient(circle,rgba(0,100,220,0.65) 0%,rgba(0,60,180,0.25) 45%,transparent 70%); animation-duration:24s; animation-direction:reverse; }
         .adv-orb-3 { width:500px; height:500px; top:35%; left:50%; background:radial-gradient(circle,rgba(0,200,160,0.5) 0%,rgba(0,150,110,0.18) 50%,transparent 75%); animation-duration:28s; animation-delay:-8s; }
@@ -392,7 +368,9 @@ Your role:
           <div>
             <div style={{ fontSize: 12, color: '#475569', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4 }}>Current City AQI</div>
             <div style={{ fontSize: 64, fontWeight: 700, color: aqiColor, lineHeight: 1, textShadow: `0 0 30px ${aqiColor}44` }}>{cityAQI}</div>
-            <div style={{ marginTop: 6, display: 'inline-block', padding: '4px 12px', borderRadius: 99, background: aqiColor + '20', color: aqiColor, fontSize: 13, fontWeight: 700, border: `1px solid ${aqiColor}40`, letterSpacing: '0.06em' }}>{cat.label.toUpperCase()}</div>
+            <div style={{ marginTop: 6, display: 'inline-block', padding: '4px 12px', borderRadius: 99, background: aqiColor + '20', color: aqiColor, fontSize: 13, fontWeight: 700, border: `1px solid ${aqiColor}40`, letterSpacing: '0.06em' }}>
+              {cat.label.toUpperCase()}
+            </div>
           </div>
           <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -405,7 +383,7 @@ Your role:
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <Thermometer size={14} style={{ color: '#fbbf24' }} />
-              <span style={{ fontSize: 14, color: '#94a3b8' }}>Dominant pollutant: <span style={{ color: '#e2e8f0', fontWeight: 600 }}>PM2.5</span></span>
+              <span style={{ fontSize: 14, color: '#94a3b8' }}>PM2.5: <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{owmAir ? `${owmAir.pm25.toFixed(1)} µg/m³` : 'Loading...'}</span></span>
             </div>
           </div>
           <button onClick={handleDownload}
@@ -422,6 +400,7 @@ Your role:
             AI Health Advisor
           </div>
           <div style={{ borderRadius: 20, overflow: 'hidden', background: 'rgba(15,23,35,0.85)', border: '1px solid rgba(100,130,160,0.18)', boxShadow: '0 8px 40px rgba(0,0,0,0.45),inset 0 1px 0 rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column', height: 480 }}>
+
             {/* Chat header */}
             <div style={{ padding: '14px 18px', borderBottom: '1px solid rgba(100,130,160,0.12)', background: 'rgba(20,30,45,0.9)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
               <div style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(0,179,143,0.1)', border: '1px solid rgba(0,179,143,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -431,7 +410,15 @@ Your role:
                 <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 16, fontWeight: 800, color: '#e2e8f0' }}>AeroSense AI</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 1 }}>
                   <div className="pulse-dot" style={{ width: 5, height: 5, borderRadius: '50%', background: '#00b38f' }} />
-                  <span style={{ fontSize: 12, color: '#00b38f', fontFamily: 'IBM Plex Mono, monospace' }}>Live · AQI {cityAQI} · {cityName}</span>
+                  <span style={{ fontSize: 12, color: '#00b38f', fontFamily: 'IBM Plex Mono, monospace' }}>
+                    Live · AQI {cityAQI} · {cityName}
+                  </span>
+                  {owmLoading && (
+                    <span style={{ fontSize: 11, color: '#475569', marginLeft: 6 }}>· fetching data...</span>
+                  )}
+                  {!owmLoading && owmCurrent && (
+                    <span style={{ fontSize: 11, color: '#334155', marginLeft: 6 }}>· past & forecast loaded ✓</span>
+                  )}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: '#64748b', padding: '4px 10px', borderRadius: 99, border: '1px solid rgba(100,130,160,0.15)', background: 'rgba(255,255,255,0.04)' }}>
@@ -447,7 +434,7 @@ Your role:
                     <div style={{ fontSize: 28, marginBottom: 8 }}>🌬️</div>
                     <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 16, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>Your Air Quality Assistant</div>
                     <div style={{ fontSize: 13, color: '#64748b', lineHeight: 1.7, fontFamily: 'Inter, system-ui, sans-serif' }}>
-                      Ask me anything about today's air quality in {cityName} and how to stay safe.
+                      Ask me about past, current, or future air quality in {cityName}.
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
@@ -476,7 +463,7 @@ Your role:
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
-                  placeholder="Ask about air quality, health tips, safety..."
+                  placeholder="Ask about past, current or future air quality..."
                   style={{ flex: 1, padding: '10px 14px', borderRadius: 12, border: '1px solid rgba(100,130,160,0.18)', background: 'linear-gradient(135deg,rgba(30,42,58,0.9) 0%,rgba(20,30,44,0.95) 100%)', color: '#cbd5e1', fontSize: 15, fontFamily: 'Inter, system-ui, sans-serif', outline: 'none', transition: 'border-color 0.2s' }}
                 />
                 <button
@@ -487,7 +474,7 @@ Your role:
                 </button>
               </div>
               <div style={{ fontSize: 11, color: '#334155', marginTop: 7, textAlign: 'center' }}>
-                Powered by Groq · Responses based on live AQI data for {cityName}
+                Powered by Groq · Real air data from OpenWeatherMap · {cityName}
               </div>
             </div>
           </div>

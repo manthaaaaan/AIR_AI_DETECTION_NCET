@@ -5,7 +5,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AirQualityProvider } from '@/context/AirQualityContext';
 import Navbar from '@/components/Navbar';
-import StationDrawer from '@/components/StationDrawer';
+
 import BottomTicker from '@/components/BottomTicker';
 import LoadingScreen from '@/components/LoadingScreen';
 import Dashboard from '@/pages/Dashboard';
@@ -29,7 +29,7 @@ const App = () => {
           {!loaded && <LoadingScreen onComplete={handleLoadComplete} />}
           <BrowserRouter>
             <Navbar />
-            <StationDrawer />
+            
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/predict" element={<Predict />} />

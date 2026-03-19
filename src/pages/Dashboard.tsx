@@ -7,12 +7,64 @@ import { getAQIColor, getAQICategory, healthAdvisory, pollutantInfo } from '@/da
 import { indianStates } from '@/data/indiaLocations';
 import AQIGauge from '@/components/AQIGauge';
 import PollutantCard from '@/components/PollutantCard';
-import { motion } from 'framer-motion';
-import { Clock, Search, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Clock, Search, X, Layers } from 'lucide-react';
+
+// ── Map Themes ─────────────────────────────────────────────────
+const MAP_THEMES = [
+  {
+    id: 'dark',
+    label: 'Dark',
+    preview: '#0a0e14',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+  },
+  {
+    id: 'voyager',
+    label: 'Google Maps',
+    preview: '#e8f0d8',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+  },
+  {
+    id: 'light',
+    label: 'Light',
+    preview: '#f5f5f0',
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
+  },
+  {
+    id: 'satellite',
+    label: 'Satellite',
+    preview: '#1a2a1a',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; <a href="https://www.esri.com/">Esri</a>',
+  },
+  {
+    id: 'terrain',
+    label: 'Terrain',
+    preview: '#c8d8a8',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; <a href="https://www.esri.com/">Esri</a>',
+  },
+  {
+    id: 'watercolor',
+    label: 'Watercolor',
+    preview: '#d4e8f0',
+    url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',
+    attribution: 'Map tiles by <a href="http://stamen.com">Stamen Design</a>',
+  },
+  {
+    id: 'osm',
+    label: 'Street',
+    preview: '#f0e8d8',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>',
+  },
+];
 
 const createMarkerIcon = (aqi: number, name: string, isLive = false) => {
   const color = getAQIColor(aqi);
-  // Hide "Zone N" labels for local sub-stations — only show name for real named stations
   const showLabel = !name.match(/^Zone\s*\d+$/i) && !name.match(/^s-/);
   return L.divIcon({
     className: 'custom-marker',
@@ -49,8 +101,7 @@ const createUserIcon = () => L.divIcon({
   iconAnchor: [12, 12],
 });
 
-// ── Local markers are ALWAYS visible — only toggle regional ones ──────────────
-const LOCAL_ZOOM_THRESHOLD = 8; // show regional city-level markers at all zoom levels > 8
+const LOCAL_ZOOM_THRESHOLD = 8;
 
 const MapMarkers = () => {
   const map = useMap();
@@ -59,10 +110,9 @@ const MapMarkers = () => {
 
   const applyZoomVisibility = useCallback((zoom: number) => {
     markersRef.current.forEach(({ marker, isRegional }) => {
-      if (!isRegional) return; // local markers always visible
+      if (!isRegional) return;
       const el = marker.getElement();
       if (!el) return;
-      // Show regional markers only when zoomed out enough
       el.style.opacity = zoom <= LOCAL_ZOOM_THRESHOLD ? '0' : '1';
       el.style.pointerEvents = zoom <= LOCAL_ZOOM_THRESHOLD ? 'none' : 'auto';
     });
@@ -77,20 +127,18 @@ const MapMarkers = () => {
   useEffect(() => {
     markersRef.current.forEach(({ marker }) => marker.remove());
     markersRef.current = [];
-
     const currentZoom = map.getZoom();
 
     stations.forEach(station => {
       const isLocal = station.id.startsWith('s-local') || station.id === 's-center';
       const isCenter = station.id === 's-center';
-      // Regional = not local (city-level comparison stations)
       const isRegional = !isLocal;
 
       const marker = L.marker([station.lat, station.lng], {
         icon: createMarkerIcon(
           station.aqi,
-          isLocal && !isCenter ? '' : station.name, // suppress Zone N labels
-          isCenter // live glow only on center
+          isLocal && !isCenter ? '' : station.name,
+          isCenter
         ),
         zIndexOffset: isCenter ? 1000 : isLocal ? 500 : 0,
       })
@@ -118,7 +166,6 @@ const MapMarkers = () => {
         `, { className: 'dark-popup' })
         .on('click', () => setSelectedStation(station));
 
-      // Regional markers: hidden when zoomed in (local detail view)
       if (isRegional) {
         const el = marker.getElement();
         if (el) {
@@ -131,7 +178,6 @@ const MapMarkers = () => {
     });
 
     setTimeout(() => applyZoomVisibility(map.getZoom()), 50);
-
     return () => { markersRef.current.forEach(({ marker }) => marker.remove()); };
   }, [stations, map, setSelectedStation, applyZoomVisibility]);
 
@@ -148,17 +194,27 @@ const MapFlyTo = ({ coords }: { coords: [number, number] }) => {
   return null;
 };
 
-const MapEvents = ({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) => {
+const MapEvents = ({
+  onMapClick,
+  userCoords,
+}: {
+  onMapClick: (lat: number, lng: number) => void;
+  userCoords: [number, number];
+}) => {
   useMapEvents({
-    click: (e) => { onMapClick(e.latlng.lat, e.latlng.lng); },
+    click: (e) => {
+      const { lat, lng } = e.latlng;
+      // Ignore clicks within ~500m of user location
+      const dist = Math.hypot(lat - userCoords[0], lng - userCoords[1]);
+      if (dist < 0.005) return;
+      onMapClick(lat, lng);
+    },
   });
   return null;
 };
-
 const UserLocationMarker = ({ coords }: { coords: [number, number] }) => {
   const map = useMap();
   const markerRef = useRef<L.Marker | null>(null);
-
   useEffect(() => {
     if (markerRef.current) markerRef.current.remove();
     markerRef.current = L.marker(coords, { icon: createUserIcon(), zIndexOffset: 1000 })
@@ -166,14 +222,12 @@ const UserLocationMarker = ({ coords }: { coords: [number, number] }) => {
       .bindTooltip('You are here', { permanent: false, direction: 'top' });
     return () => { markerRef.current?.remove(); };
   }, [coords, map]);
-
   return null;
 };
 
-const LocateMeButton = ({ coords, onReset }: { coords: [number, number], onReset: () => void }) => {
+const LocateMeButton = ({ coords, onReset }: { coords: [number, number]; onReset: () => void }) => {
   const map = useMap();
   const handleClick = useCallback(() => {
-    // Use zoom 11 (same as MapFlyTo search) so local markers remain visible
     map.flyTo(coords, 11, { duration: 1.2 });
     onReset();
   }, [map, coords, onReset]);
@@ -197,9 +251,9 @@ const LocateMeButton = ({ coords, onReset }: { coords: [number, number], onReset
           onMouseLeave={e => (e.currentTarget.style.background = '#0f172a')}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
-            <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" fill="#3b82f688" stroke="none"/>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+            <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z" fill="#3b82f688" stroke="none" />
           </svg>
         </button>
       </div>
@@ -207,16 +261,113 @@ const LocateMeButton = ({ coords, onReset }: { coords: [number, number], onReset
   );
 };
 
+// ── Theme Picker Button (inside map) ───────────────────────────
+const ThemePickerButton = ({
+  activeTheme,
+  onThemeChange,
+}: {
+  activeTheme: typeof MAP_THEMES[0];
+  onThemeChange: (theme: typeof MAP_THEMES[0]) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      style={{
+        position: 'absolute', bottom: 32, left: 12, zIndex: 1000,
+        fontFamily: 'IBM Plex Mono, monospace',
+      }}
+    >
+      {/* Toggle button */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="Change map style"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '8px 14px', borderRadius: 10,
+          background: 'rgba(10,14,20,0.92)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          color: '#e2e8f0', fontSize: 13, fontWeight: 600,
+          cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(12px)', transition: 'all 0.2s',
+        }}
+        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(30,40,60,0.95)')}
+        onMouseLeave={e => (e.currentTarget.style.background = 'rgba(10,14,20,0.92)')}
+      >
+        <Layers size={14} style={{ color: '#00d4aa' }} />
+        {activeTheme.label}
+      </button>
+
+      {/* Theme grid popup */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            transition={{ duration: 0.18 }}
+            style={{
+              position: 'absolute', bottom: '110%', left: 0,
+              background: 'rgba(10,14,20,0.97)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 16, padding: 14,
+              boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+              backdropFilter: 'blur(20px)',
+              display: 'grid', gridTemplateColumns: '1fr 1fr',
+              gap: 8, minWidth: 220,
+            }}
+          >
+            <div style={{ gridColumn: '1/-1', fontSize: 11, color: '#475569', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 4, fontWeight: 600 }}>
+              Map Style
+            </div>
+            {MAP_THEMES.map(theme => {
+              const isActive = theme.id === activeTheme.id;
+              return (
+                <button
+                  key={theme.id}
+                  onClick={() => { onThemeChange(theme); setOpen(false); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '8px 10px', borderRadius: 10, cursor: 'pointer',
+                    background: isActive ? 'rgba(0,212,170,0.12)' : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${isActive ? 'rgba(0,212,170,0.4)' : 'rgba(255,255,255,0.06)'}`,
+                    color: isActive ? '#00d4aa' : '#94a3b8',
+                    fontSize: 13, fontWeight: isActive ? 600 : 400,
+                    transition: 'all 0.15s', textAlign: 'left',
+                  }}
+                  onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
+                  onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+                >
+                  {/* Color swatch */}
+                  <div style={{
+                    width: 18, height: 18, borderRadius: 5, flexShrink: 0,
+                    background: theme.preview,
+                    border: `1px solid ${isActive ? '#00d4aa' : 'rgba(255,255,255,0.15)'}`,
+                    boxShadow: isActive ? '0 0 8px rgba(0,212,170,0.4)' : 'none',
+                  }} />
+                  {theme.label}
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// ── Main Dashboard ─────────────────────────────────────────────
 const Dashboard = () => {
   const {
     cityAQI, cityName, liveAvgAQI, stations, lastUpdated,
     userCoords, viewCoords, setViewCoords, handleMapClick,
-    dataLoading, addSearchedLocation,
+    dataLoading, addSearchedLocation, selectedStation, setSelectedStation,
   } = useAirQuality();
 
   const [selectedState, setSelectedState] = useState('');
   const [locationSearch, setLocationSearch] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeTheme, setActiveTheme] = useState(MAP_THEMES[0]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapperRef = useRef<HTMLDivElement>(null);
 
@@ -239,10 +390,28 @@ const Dashboard = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const category = getAQICategory(cityAQI);
-  const advisory = healthAdvisory[category.label] || '';
+  // ── Active data ────────────────────────────────────────────────
+  const activeAQI  = selectedStation?.aqi  ?? liveAvgAQI ?? cityAQI;
 
-  const avgStation = stations.length ? {
+  const coordMatch = (a: [number, number], b: [number, number]) =>
+    Math.abs(a[0] - b[0]) < 0.001 && Math.abs(a[1] - b[1]) < 0.001;
+  const isAtUserLocation = coordMatch(viewCoords, userCoords);
+  const displayLocationName = dataLoading
+    ? 'Detecting…'
+    : cityName || (isAtUserLocation ? 'Current Location' : 'Unknown');
+
+  const activeName = selectedStation?.name ?? displayLocationName;
+  const category   = getAQICategory(activeAQI);
+  const advisory   = healthAdvisory[category.label] || '';
+
+  const avgStation = selectedStation ? {
+    pm25: selectedStation.pm25,
+    pm10: selectedStation.pm10,
+    no2:  selectedStation.no2,
+    co:   selectedStation.co,
+    o3:   selectedStation.o3,
+    so2:  selectedStation.so2,
+  } : stations.length ? {
     pm25: Math.round(stations.reduce((s, st) => s + st.pm25, 0) / stations.length),
     pm10: Math.round(stations.reduce((s, st) => s + st.pm10, 0) / stations.length),
     no2:  Math.round(stations.reduce((s, st) => s + st.no2,  0) / stations.length),
@@ -252,20 +421,6 @@ const Dashboard = () => {
   } : { pm25: 0, pm10: 0, no2: 0, co: 0, o3: 0, so2: 0 };
 
   const secondsAgo = Math.round((Date.now() - lastUpdated.getTime()) / 1000);
-
-  // ── Display name logic ────────────────────────────────────────────────────
-  // Compare coords with tolerance (floating point drift)
-  const coordMatch = (a: [number, number], b: [number, number]) =>
-    Math.abs(a[0] - b[0]) < 0.001 && Math.abs(a[1] - b[1]) < 0.001;
-
-  const isAtUserLocation = coordMatch(viewCoords, userCoords);
-
-  // Use cityName from context — it's already resolved by the context to the
-  // real city name via reverse geocoding. Only override with "Current Location"
-  // when we're literally at the user's GPS pin AND cityName hasn't resolved yet.
-  const displayLocationName = dataLoading
-    ? 'Detecting…'
-    : cityName || (isAtUserLocation ? 'Current Location' : 'Unknown');
 
   return (
     <motion.div
@@ -289,6 +444,7 @@ const Dashboard = () => {
                     setSelectedState(e.target.value);
                     setLocationSearch('');
                     setShowSuggestions(false);
+                    setSelectedStation(null);
                   }}
                   className="w-full bg-muted border border-border rounded-md px-3 py-2 text-sm font-mono text-foreground focus:ring-1 focus:ring-primary outline-none"
                 >
@@ -328,6 +484,7 @@ const Dashboard = () => {
                           key={district.name}
                           onMouseDown={(e) => {
                             e.preventDefault();
+                            setSelectedStation(null);
                             addSearchedLocation(district.lat, district.lng, district.name);
                             setLocationSearch(district.name);
                             setShowSuggestions(false);
@@ -352,9 +509,11 @@ const Dashboard = () => {
           </div>
 
           <div className="glass-card p-5 text-center">
-            <p className="text-sm font-mono text-muted-foreground uppercase tracking-wider mb-2">10km Area Average AQI</p>
-            <p className="text-xl font-mono font-bold text-foreground mb-4">{displayLocationName}</p>
-            <AQIGauge value={liveAvgAQI || cityAQI} size={220} />
+            <p className="text-sm font-mono text-muted-foreground uppercase tracking-wider mb-2">
+              {selectedStation ? 'Selected Station AQI' : '10km Area Average AQI'}
+            </p>
+            <p className="text-xl font-mono font-bold text-foreground mb-4">{activeName}</p>
+            <AQIGauge value={activeAQI} size={220} />
             <div className="mt-4">
               <span
                 className="inline-block px-3 py-1 rounded-full text-sm font-mono font-semibold"
@@ -363,6 +522,14 @@ const Dashboard = () => {
                 {category.label}
               </span>
             </div>
+            {selectedStation && (
+              <button
+                onClick={() => setSelectedStation(null)}
+                className="mt-3 text-xs font-mono text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+              >
+                ← Back to area average
+              </button>
+            )}
           </div>
 
           <div className="glass-card p-5">
@@ -383,12 +550,12 @@ const Dashboard = () => {
             center={[22.5, 82.0]}
             zoom={5}
             className="h-full w-full rounded-md shadow-inner"
-            style={{ background: '#0a0e14' }}
             zoomControl={false}
           >
             <TileLayer
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+              key={activeTheme.id}
+              url={activeTheme.url}
+              attribution={activeTheme.attribution}
             />
             <MapFlyTo coords={viewCoords} />
             <Circle
@@ -405,10 +572,17 @@ const Dashboard = () => {
                 setViewCoords(userCoords);
                 setSelectedState('');
                 setLocationSearch('');
+                setSelectedStation(null);
               }}
             />
             <MapEvents onMapClick={handleMapClick} />
           </MapContainer>
+
+          {/* Theme picker — sits over the map */}
+          <ThemePickerButton
+            activeTheme={activeTheme}
+            onThemeChange={setActiveTheme}
+          />
 
           {dataLoading && (
             <div className="absolute inset-0 bg-background/20 backdrop-blur-[1px] z-[500] flex items-center justify-center">
@@ -423,7 +597,7 @@ const Dashboard = () => {
         {/* ── Right Panel ── */}
         <div className="w-full lg:w-80 p-5 flex flex-col gap-4 flex-shrink-0 overflow-y-auto">
           <h3 className="font-heading text-base font-bold text-foreground uppercase tracking-widest mb-1 border-b border-border/40 pb-3">
-            {dataLoading ? 'Analyzing…' : `Pollutants · ${displayLocationName}`}
+            {dataLoading ? 'Analyzing…' : `Pollutants · ${activeName}`}
           </h3>
           <div className="flex flex-col gap-3">
             {pollutantInfo.map(p => (
