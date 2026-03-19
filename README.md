@@ -1,6 +1,6 @@
 # 🌬️ AeroSense — AI-Powered Air Quality Intelligence
 
-> Real-time air quality monitoring, forecasting, and health advisory — built for NCET Hackathon 2026.
+> Real-time air quality monitoring, forecasting, and health advisory — built for VibeXathon 2026.
 
 ---
 
