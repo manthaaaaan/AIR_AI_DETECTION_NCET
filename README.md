@@ -4,9 +4,29 @@
 
 ---
 
+## 🎬 Demo Video
+
+[![Watch Demo](https://img.shields.io/badge/Watch%20Demo-Google%20Drive-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1VS3YH1Ziq0_vW5LhOy2mjArYY-0s-QhC/view?usp=sharing)
+
+---
+
 ## What is AeroSense?
 
 AeroSense is a full-stack web application that gives users real-time air quality data for their location, predicts future AQI using ML models, and provides AI-driven health guidance — all in one clean, fast interface.
+
+---
+
+## Tech Stack
+
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![TailwindCSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
+![Framer](https://img.shields.io/badge/Framer_Motion-black?style=for-the-badge&logo=framer&logoColor=white)
+![Leaflet](https://img.shields.io/badge/Leaflet-199900?style=for-the-badge&logo=leaflet&logoColor=white)
+![HuggingFace](https://img.shields.io/badge/HuggingFace-FFD21E?style=for-the-badge&logo=huggingface&logoColor=black)
+![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
+![OpenWeatherMap](https://img.shields.io/badge/OpenWeatherMap-EB6E4B?style=for-the-badge&logo=openweathermap&logoColor=white)
 
 ---
 
@@ -23,27 +43,15 @@ AeroSense is a full-stack web application that gives users real-time air quality
 
 ---
 
-## Tech Stack
-
-- **Frontend** — React, TypeScript, Vite, Tailwind CSS, Framer Motion
-- **Maps** — Leaflet + React Leaflet, CartoCDN / Esri / Stadia tiles
-- **AI / ML** — Groq (Llama 3.1), HuggingFace Transformers.js, Open-Meteo CAMS
-- **Air Data** — OpenWeatherMap Air Pollution API, OpenAQ v3
-- **Geocoding** — Nominatim (OpenStreetMap)
-
----
-
 ## Getting Started
 
 ### 1. Clone the repo
-
 ```bash
 git clone https://github.com/manthaaaaan/AIR_AI_DETECTION_NCET.git
 cd AIR_AI_DETECTION_NCET
 ```
 
 ### 2. Install dependencies
-
 ```bash
 npm install
 ```
@@ -51,7 +59,6 @@ npm install
 ### 3. Set up environment variables
 
 Create a `.env` file in the root:
-
 ```dotenv
 VITE_GROQ_API_KEY=your_groq_key
 VITE_OWM_API_KEY=your_openweathermap_key
@@ -67,7 +74,6 @@ VITE_OPENAQ_API_KEY=your_openaq_key
 | `VITE_OPENAQ_API_KEY` | [openaq.org](https://openaq.org) |
 
 ### 4. Run the app
-
 ```bash
 npm run dev
 ```
@@ -87,7 +93,6 @@ Open [http://localhost:8080](http://localhost:8080)
 ---
 
 ## Project Structure
-
 ```
 src/
 ├── pages/
@@ -112,5 +117,5 @@ src/
 
 ## Built by
 
-GIT-HAPPENS 
+**GIT-HAPPENS**  
 NCET VIBEXATHON-2026
