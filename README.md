@@ -112,5 +112,5 @@ src/
 
 ## Built by
 
-**Manthan** — Frontend Developer  
-NCET Hackathon 2026
+GIT-HAPPENS 
+NCET VIBEXATHON-2026
