@@ -1,8 +1,11 @@
 import { useAirQuality } from '@/context/AirQualityContext';
 import { getAQIColor } from '@/data/mockSensorData';
+import { useLocation } from 'react-router-dom';
 
 const BottomTicker = () => {
   const { stations } = useAirQuality();
+  const location = useLocation();
+  const isLivePage = location.pathname === '/';
 
   const content = stations.map(s => (
     <span key={s.id} className="inline-flex items-center gap-2 mx-4 whitespace-nowrap">
@@ -13,12 +16,22 @@ const BottomTicker = () => {
   ));
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-[800] glass-card border-t border-border overflow-hidden h-8 flex items-center">
-      <div className="animate-ticker flex font-mono text-xs">
-        {content}
-        {content}
+    <>
+      <style>{`
+        /* Desktop: always at bottom */
+        /* Mobile: only show on live page, above bottom nav */
+        @media (max-width: 767px) {
+          .bottom-ticker { bottom: 64px !important; }
+          .bottom-ticker-hidden { display: none !important; }
+        }
+      `}</style>
+      <div className={`bottom-ticker${!isLivePage ? ' bottom-ticker-hidden' : ''} fixed bottom-0 left-0 right-0 z-[800] glass-card border-t border-border overflow-hidden h-8 flex items-center`}>
+        <div className="animate-ticker flex font-mono text-xs">
+          {content}
+          {content}
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 

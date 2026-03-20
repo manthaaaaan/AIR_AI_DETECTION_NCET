@@ -1,38 +1,39 @@
-import React, { useMemo, useEffect, useState } from 'react';
+import React, { useMemo, useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   BarChart, Bar, RadarChart, Radar, PolarGrid, PolarAngleAxis,
-  PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine, Cell as RCell,
+  PieChart, Pie, Cell, XAxis, YAxis,
+  Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import { useAirQuality } from '@/context/AirQualityContext';
-import { Wind, Activity, ShieldCheck, PieChart as PieIcon, Zap, AlertTriangle } from 'lucide-react';
+import { Wind, Activity, ShieldCheck, PieChart as PieIcon, AlertTriangle } from 'lucide-react';
 import { pipeline } from '@huggingface/transformers';
 
-// ── Design Tokens ────────────────────────────────────────────────────────
+// ── Cyberpunk tokens ─────────────────────────────────────────────────────
 const C = {
-  bg:      '#050810',
-  teal:    '#00d4aa',
-  blue:    '#4090ff',
-  gold:    '#fbbf24',
-  red:     '#ef4444',
-  purple:  '#7c6fcd',
-  text:    '#e2e8f0',
-  textDim: '#94a3b8',
-  sub:     '#445566',
-  border:  'rgba(100,130,160,0.14)',
+  bg:      '#0d0d1a',
+  bgCard:  '#0f0f20',
+  pink:    '#ff00ff',
+  yellow:  '#facc15',
+  cyan:    '#00fff5',
+  red:     '#ff2d55',
+  purple:  '#b94fff',
+  green:   '#39ff14',
+  text:    '#f0e6ff',
+  textDim: '#8b7aaa',
+  sub:     '#3d2f5a',
 };
 
 const AQI_BANDS = [
-  { max: 50,       label: 'Good',      color: '#00d4aa' },
-  { max: 100,      label: 'Moderate',  color: '#c8e05a' },
-  { max: 150,      label: 'Sensitive', color: '#f0c040' },
-  { max: 200,      label: 'Unhealthy', color: '#f07840' },
-  { max: 300,      label: 'Very Poor', color: '#e84860' },
-  { max: Infinity, label: 'Hazardous', color: '#c02040' },
+  { max: 50,       label: 'Good',      color: '#39ff14' },
+  { max: 100,      label: 'Moderate',  color: '#facc15' },
+  { max: 150,      label: 'Sensitive', color: '#ff9500' },
+  { max: 200,      label: 'Unhealthy', color: '#ff2d55' },
+  { max: 300,      label: 'Very Poor', color: '#b94fff' },
+  { max: Infinity, label: 'Hazardous', color: '#ff00ff' },
 ];
 
-const WHO = { pm25: 15, pm10: 45, o3: 100, no2: 25 };
+const WHO: Record<string, number> = { pm25: 15, pm10: 45, o3: 100, no2: 25 };
 
 function band(aqi: number) {
   return AQI_BANDS.find(b => aqi <= b.max) ?? AQI_BANDS.at(-1)!;
@@ -46,161 +47,209 @@ function distKm(la1: number, lo1: number, la2: number, lo2: number) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// ── Z-score anomaly detection (runs on AQI array) ────────────────────────
 function detectAnomalies(values: number[], threshold = 1.8): boolean[] {
   const mean = values.reduce((a, b) => a + b, 0) / values.length;
-  const std = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length);
+  const std  = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length);
   return values.map(v => Math.abs((v - mean) / (std || 1)) > threshold);
 }
 
-// ── Custom Components ────────────────────────────────────────────────────
-const Card = ({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) => (
-  <div style={{ background: 'rgba(255,255,255,0.02)', border: `1px solid ${C.border}`, borderRadius: 28, overflow: 'hidden', ...style }}>
+// ── Card ─────────────────────────────────────────────────────────────────
+const Card = ({ children, accent = C.pink, style }: {
+  children: React.ReactNode; accent?: string; style?: React.CSSProperties;
+}) => (
+  <div style={{
+    background: C.bgCard,
+    border: `1px solid ${accent}30`,
+    borderRadius: 4,
+    overflow: 'hidden',
+    position: 'relative',
+    boxShadow: `0 0 28px ${accent}10, inset 0 0 28px rgba(0,0,0,0.4)`,
+    width: '100%',
+    ...style,
+  }}>
+    <div style={{ position:'absolute', top:0, left:0, width:16, height:16, borderTop:`2px solid ${accent}`, borderLeft:`2px solid ${accent}` }} />
+    <div style={{ position:'absolute', top:0, right:0, width:16, height:16, borderTop:`2px solid ${accent}`, borderRight:`2px solid ${accent}` }} />
+    <div style={{ position:'absolute', bottom:0, left:0, width:16, height:16, borderBottom:`2px solid ${accent}`, borderLeft:`2px solid ${accent}` }} />
+    <div style={{ position:'absolute', bottom:0, right:0, width:16, height:16, borderBottom:`2px solid ${accent}`, borderRight:`2px solid ${accent}` }} />
     {children}
   </div>
 );
 
+// ── Card Header ───────────────────────────────────────────────────────────
 const CardHeader = ({ title, sub, icon: Icon, iconColor, badge }: any) => (
-  <div style={{ padding: '32px 32px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-        <h3 style={{ margin: 0, fontSize: 22, color: '#fff', fontWeight: 700 }}>{title}</h3>
+  <div style={{ padding: '20px 16px 10px', display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:10 }}>
+    <div style={{ flex:1, minWidth:0 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5, flexWrap:'wrap' }}>
+        <h3 style={{
+          margin:0, fontWeight:700, color:iconColor,
+          textShadow:`0 0 16px ${iconColor}80`,
+          fontFamily:'IBM Plex Mono, monospace',
+          letterSpacing:'0.04em', textTransform:'uppercase',
+          fontSize:'clamp(12px, 3.5vw, 18px)',
+          wordBreak:'break-word',
+        }}>{title}</h3>
         {badge}
       </div>
-      <p style={{ margin: 0, fontSize: 14, color: C.textDim, fontFamily: 'IBM Plex Mono' }}>{sub}</p>
+      <p style={{ margin:0, color:C.textDim, fontFamily:'IBM Plex Mono', fontSize:'clamp(9px, 2.2vw, 11px)', wordBreak:'break-word', lineHeight:1.5 }}>{sub}</p>
     </div>
-    <div style={{ background: `${iconColor}15`, padding: 12, borderRadius: 14, border: `1px solid ${iconColor}30`, flexShrink: 0 }}>
-      <Icon size={24} color={iconColor} />
+    <div style={{
+      background:`${iconColor}12`, padding:9, borderRadius:4,
+      border:`1px solid ${iconColor}40`, flexShrink:0,
+      boxShadow:`0 0 14px ${iconColor}25`,
+    }}>
+      <Icon size={18} color={iconColor} style={{ filter:`drop-shadow(0 0 5px ${iconColor})`, display:'block' }} />
     </div>
   </div>
 );
 
+// ── Section divider ───────────────────────────────────────────────────────
 const SectionNo = ({ n, label, accent }: any) => (
-  <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-    <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 14, color: accent, fontWeight: 700 }}>{n}</span>
-    <div style={{ flex: 1, height: 1, background: `linear-gradient(90deg, ${accent}40, transparent)` }} />
-    <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 12, color: C.sub, textTransform: 'uppercase' }}>{label}</span>
+  <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16, flexWrap:'wrap' }}>
+    <span style={{
+      fontFamily:'IBM Plex Mono', fontSize:10, color:C.bg,
+      background:accent, padding:'2px 7px', borderRadius:2,
+      fontWeight:700, letterSpacing:'0.1em',
+      boxShadow:`0 0 12px ${accent}80`, flexShrink:0,
+    }}>{n}</span>
+    <div style={{ flex:1, minWidth:40, height:1, background:`linear-gradient(90deg, ${accent}60, transparent)` }} />
+    <span style={{
+      fontFamily:'IBM Plex Mono', fontSize:9, color:accent,
+      textTransform:'uppercase', letterSpacing:'0.12em',
+      textShadow:`0 0 8px ${accent}`, flexShrink:0,
+    }}>{label}</span>
   </div>
 );
 
-const WhiteHoverFixBar = (props: any) => {
+// ── Bar shapes ────────────────────────────────────────────────────────────
+const CyberBar = (props: any) => {
   const { fill, x, y, width, height } = props;
-  return <rect x={x} y={y} width={width} height={height} rx={12} ry={12} fill={fill} />;
+  if (!height || height <= 0) return null;
+  return (
+    <g>
+      <rect x={x-2} y={y} width={width+4} height={height} fill={fill} opacity={0.1} />
+      <rect x={x} y={y} width={width} height={height} fill={fill} style={{ filter:`drop-shadow(0 0 7px ${fill}90)` }} />
+      <rect x={x} y={y} width={width} height={2} fill="#fff" opacity={0.2} />
+    </g>
+  );
 };
 
-// ── Anomaly Bar — red glow if anomaly ────────────────────────────────────
 const AnomalyBar = (props: any) => {
-  const { fill, x, y, width, height, isAnomaly } = props;
+  const { x, y, width, height, isAnomaly } = props;
+  if (!height || height <= 0) return null;
+  const color = isAnomaly ? C.red : C.cyan;
   return (
     <g>
       {isAnomaly && (
-        <rect
-          x={x - 3} y={y - 3}
-          width={width + 6} height={height + 6}
-          rx={10} ry={10}
-          fill="rgba(239,68,68,0.15)"
-          stroke="#ef4444"
-          strokeWidth={1.5}
-          strokeDasharray="4 2"
+        <rect x={x-3} y={y-3} width={width+6} height={height+3}
+          fill="rgba(255,45,85,0.07)" stroke={C.red} strokeWidth={1} strokeDasharray="3 2"
+          style={{ filter:`drop-shadow(0 0 5px ${C.red})` }}
         />
       )}
-      <rect
-        x={x} y={y}
-        width={width} height={height}
-        rx={8} ry={8}
-        fill={isAnomaly ? '#ef4444' : fill}
-        style={isAnomaly ? { filter: 'drop-shadow(0 0 8px rgba(239,68,68,0.7))' } : undefined}
-      />
+      <rect x={x-1} y={y} width={width+2} height={height} fill={color} opacity={0.1} />
+      <rect x={x} y={y} width={width} height={height} fill={color} style={{ filter:`drop-shadow(0 0 9px ${color}80)` }} />
+      <rect x={x} y={y} width={width} height={2} fill="#fff" opacity={0.18} />
     </g>
+  );
+};
+
+// ── Tooltips ──────────────────────────────────────────────────────────────
+const CyberTooltip = ({ active, payload, label, accent = C.pink }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background:'#0a0a18', border:`1px solid ${accent}50`, borderRadius:4, padding:'9px 13px', fontFamily:'IBM Plex Mono', fontSize:12, boxShadow:`0 0 18px ${accent}25` }}>
+      <div style={{ color:C.textDim, marginBottom:3, fontSize:10, textTransform:'uppercase', letterSpacing:'0.08em' }}>{label}</div>
+      {payload.map((p: any, i: number) => (
+        <div key={i} style={{ color:accent, fontWeight:700, fontSize:14, textShadow:`0 0 7px ${accent}` }}>{typeof p.value === 'number' ? p.value.toFixed(1) : p.value}</div>
+      ))}
+    </div>
+  );
+};
+
+const AnomalyTooltip = ({ active, payload }: any) => {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  const color = d.isAnomaly ? C.red : C.cyan;
+  return (
+    <div style={{ background:'#0a0a18', border:`1px solid ${color}50`, borderRadius:4, padding:'9px 13px', fontFamily:'IBM Plex Mono', fontSize:12, boxShadow:`0 0 18px ${color}25` }}>
+      <div style={{ color:C.textDim, marginBottom:3, fontSize:10 }}>{d.name}</div>
+      <div style={{ color, fontWeight:700, fontSize:14, textShadow:`0 0 8px ${color}` }}>AQI {d.aqi}</div>
+      {d.isAnomaly && <div style={{ color:C.red, marginTop:5, fontSize:9, textTransform:'uppercase', letterSpacing:'0.1em' }}>⚠ Anomaly</div>}
+    </div>
   );
 };
 
 // ── HF Badge ─────────────────────────────────────────────────────────────
 const HFBadge = ({ loading }: { loading: boolean }) => (
   <div style={{
-    display: 'flex', alignItems: 'center', gap: 6,
-    padding: '4px 10px', borderRadius: 99,
-    background: loading ? 'rgba(255,200,0,0.08)' : 'rgba(124,111,205,0.1)',
-    border: `1px solid ${loading ? 'rgba(255,200,0,0.3)' : 'rgba(124,111,205,0.35)'}`,
-    fontSize: 11, fontFamily: 'IBM Plex Mono',
-    color: loading ? '#fbbf24' : '#7c6fcd',
-    whiteSpace: 'nowrap',
+    display:'flex', alignItems:'center', gap:5,
+    padding:'3px 8px', borderRadius:2,
+    background: loading ? 'rgba(250,204,21,0.08)' : 'rgba(185,79,255,0.08)',
+    border:`1px solid ${loading ? C.yellow + '40' : C.purple + '40'}`,
+    fontSize:9, fontFamily:'IBM Plex Mono',
+    color: loading ? C.yellow : C.purple,
+    whiteSpace:'nowrap',
+    textShadow:`0 0 7px ${loading ? C.yellow : C.purple}`,
   }}>
-    <span>🤗</span>
-    {loading ? 'Model loading...' : 'HuggingFace · Anomaly Detection'}
+    🤗 {loading ? 'Loading...' : 'HuggingFace'}
   </div>
 );
 
-// ── Custom Anomaly Tooltip ────────────────────────────────────────────────
-const AnomalyTooltip = ({ active, payload }: any) => {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  return (
-    <div style={{ background: 'rgba(6,8,20,0.95)', border: `1px solid ${d.isAnomaly ? '#ef4444' : 'rgba(100,130,160,0.3)'}`, borderRadius: 12, padding: '10px 14px', fontFamily: 'IBM Plex Mono', fontSize: 12 }}>
-      <div style={{ color: '#94a3b8', marginBottom: 4 }}>{d.name}</div>
-      <div style={{ color: d.isAnomaly ? '#ef4444' : C.teal, fontWeight: 700, fontSize: 15 }}>AQI {d.aqi}</div>
-      {d.isAnomaly && (
-        <div style={{ color: '#ef4444', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-          <AlertTriangle size={10} /> Anomaly detected
-        </div>
-      )}
-    </div>
-  );
-};
+// ── Live anomaly hook (re-runs every 5 min) ───────────────────────────────
+const INTERVAL_MS = 5 * 60 * 1000;
 
-// ── Hook: HuggingFace Zero-Shot Anomaly Classification ───────────────────
 const useHFAnomalyDetection = (stationData: { name: string; aqi: number }[]) => {
   const [anomalyFlags, setAnomalyFlags] = useState<boolean[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [modelReady, setModelReady] = useState(false);
+  const [loading,     setLoading]     = useState(false);
+  const [modelReady,  setModelReady]  = useState(false);
+  const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [nextCheckIn, setNextCheckIn] = useState<number>(INTERVAL_MS / 1000);
+
+  const runDetection = useCallback(async (data: { name: string; aqi: number }[]) => {
+    if (!data.length) return;
+    setLoading(true);
+    try {
+      const classifier = await pipeline('zero-shot-classification', 'Xenova/nli-deberta-v3-small', { device: 'cpu' });
+      setModelReady(true);
+      const flags = await Promise.all(
+        data.map(async (s) => {
+          const result = await classifier(
+            `Air quality index reading of ${s.aqi} at station ${s.name}`,
+            ['normal air quality', 'anomalous air quality spike']
+          );
+          return (result as any).labels[0] === 'anomalous air quality spike';
+        })
+      );
+      setAnomalyFlags(flags);
+    } catch {
+      setAnomalyFlags(detectAnomalies(data.map(s => s.aqi)));
+      setModelReady(true);
+    } finally {
+      setLoading(false);
+      setLastChecked(new Date());
+      setNextCheckIn(INTERVAL_MS / 1000);
+    }
+  }, []);
 
   useEffect(() => {
     if (!stationData.length) return;
-
-    const run = async () => {
-      setLoading(true);
-      try {
-        // Load zero-shot-classification pipeline from HF
-        // Xenova is the transformers.js compatible model hub
-        const classifier = await pipeline(
-          'zero-shot-classification',
-          'Xenova/nli-deberta-v3-small',
-          { device: 'cpu' }
-        );
-
-        setModelReady(true);
-
-        // Classify each station's AQI reading
-        const flags = await Promise.all(
-          stationData.map(async (s) => {
-            const result = await classifier(
-              `Air quality index reading of ${s.aqi} at station ${s.name}`,
-              ['normal air quality', 'anomalous air quality spike']
-            );
-            // If top label is anomaly → flag it
-            return (result as any).labels[0] === 'anomalous air quality spike';
-          })
-        );
-
-        setAnomalyFlags(flags);
-      } catch (err) {
-        console.error('HF anomaly detection error:', err);
-        // Fallback to statistical detection if model fails
-        const values = stationData.map(s => s.aqi);
-        setAnomalyFlags(detectAnomalies(values));
-        setModelReady(true);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    run();
+    runDetection(stationData);
+    const iv = setInterval(() => runDetection(stationData), INTERVAL_MS);
+    return () => clearInterval(iv);
   }, [stationData.length]);
 
-  return { anomalyFlags, loading, modelReady };
+  useEffect(() => {
+    if (!lastChecked) return;
+    const ticker = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - lastChecked.getTime()) / 1000);
+      setNextCheckIn(Math.max(0, INTERVAL_MS / 1000 - elapsed));
+    }, 1000);
+    return () => clearInterval(ticker);
+  }, [lastChecked]);
+
+  return { anomalyFlags, loading, modelReady, lastChecked, nextCheckIn };
 };
 
-// ── Main Analytics Component ──────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────
 const Analytics = () => {
   const { stations, cityName, userCoords, allCityStations } = useAirQuality();
 
@@ -223,10 +272,10 @@ const Analytics = () => {
   const localPollutants = useMemo(() => {
     if (!nearestStation) return [];
     return [
-      { label: 'PM2.5',    value: nearestStation.pm25 || 0, fill: C.blue },
-      { label: 'PM10',     value: nearestStation.pm10 || 0, fill: C.blue },
-      { label: 'Ozone',    value: nearestStation.o3   || 0, fill: C.teal },
-      { label: 'Nitrogen', value: nearestStation.no2  || 0, fill: C.teal },
+      { label: 'PM2.5',    value: nearestStation.pm25 || 0, fill: C.pink },
+      { label: 'PM10',     value: nearestStation.pm10 || 0, fill: C.yellow },
+      { label: 'Ozone',    value: nearestStation.o3   || 0, fill: C.cyan },
+      { label: 'Nitrogen', value: nearestStation.no2  || 0, fill: C.purple },
     ];
   }, [nearestStation]);
 
@@ -236,16 +285,14 @@ const Analytics = () => {
   })), [localPollutants]);
 
   const qualitySpread = useMemo(() => {
-    const allNearby = [...stations, ...allCityStations];
+    const all = [...stations, ...allCityStations];
     return AQI_BANDS.map(b => ({
       name: b.label,
-      value: allNearby.filter(s => band(s.aqi).label === b.label).length,
+      value: all.filter(s => band(s.aqi).label === b.label).length,
       color: b.color,
     })).filter(c => c.value > 0);
   }, [stations, allCityStations]);
 
-  // ── Section 05: Anomaly Detection data ──────────────────────────────────
-  // Use all nearby stations for anomaly scan
   const anomalyStationData = useMemo(() => {
     const [uLat, uLon] = userCoords;
     return [...stations, ...allCityStations]
@@ -255,217 +302,268 @@ const Analytics = () => {
       .map(s => ({ name: s.name, aqi: s.aqi }));
   }, [stations, allCityStations, userCoords]);
 
-  const { anomalyFlags, loading: anomalyLoading, modelReady } = useHFAnomalyDetection(anomalyStationData);
+  const { anomalyFlags, loading: anomalyLoading, modelReady, lastChecked, nextCheckIn } = useHFAnomalyDetection(anomalyStationData);
 
   const anomalyChartData = useMemo(() =>
-    anomalyStationData.map((s, i) => ({
-      ...s,
-      isAnomaly: anomalyFlags[i] ?? false,
-    })),
+    anomalyStationData.map((s, i) => ({ ...s, isAnomaly: anomalyFlags[i] ?? false })),
     [anomalyStationData, anomalyFlags]
   );
-
   const anomalyCount = anomalyFlags.filter(Boolean).length;
 
+  const fmtCountdown = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
   return (
-    <div className="pt-32 pb-24 px-8 min-h-screen" style={{ maxWidth: 1100, margin: '0 auto', color: C.text }}>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&display=swap');
+        *, *::before, *::after { box-sizing: border-box; }
 
-      <header style={{ marginBottom: 80 }}>
-        <h1 style={{ fontSize: 64, fontWeight: 800, letterSpacing: '-0.04em', margin: 0 }}>Analytics</h1>
-        <p style={{ color: C.teal, fontFamily: 'IBM Plex Mono', fontSize: 20 }}>📍 Sensors active near {cityName}</p>
-      </header>
+        .cp-page {
+          background: ${C.bg};
+          overflow-x: hidden;
+          width: 100%;
+          min-height: 100vh;
+        }
+        .cp-page::before {
+          content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+          background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.07) 2px, rgba(0,0,0,0.07) 4px);
+        }
+        .cp-page::after {
+          content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+          background-image: linear-gradient(rgba(255,0,255,0.04) 1px,transparent 1px), linear-gradient(90deg,rgba(255,0,255,0.04) 1px,transparent 1px);
+          background-size: 40px 40px;
+        }
+        .cp-inner {
+          position: relative; z-index: 1;
+          width: 100%; max-width: 1100px;
+          margin: 0 auto;
+          padding: 120px 16px 96px;
+          color: ${C.text};
+        }
+        .cp-title {
+          font-size: clamp(40px, 12vw, 72px);
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          margin: 0;
+          font-family: 'IBM Plex Mono', monospace;
+          color: ${C.pink};
+          animation: cpglitch 4s ease-in-out infinite, cpflicker 6s linear infinite;
+          word-break: break-word;
+        }
+        .cp-two-col {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+          gap: 28px;
+          margin-bottom: 40px;
+        }
+        @keyframes cpglitch {
+          0%,100% { text-shadow: 0 0 20px #ff00ff, 0 0 40px #ff00ff80; }
+          25%      { text-shadow: -2px 0 #00fff5, 2px 0 #ff00ff, 0 0 40px #ff00ff80; }
+          50%      { text-shadow: 2px 0 #ff2d55, -2px 0 #facc15, 0 0 40px #ff00ff80; }
+          75%      { text-shadow: -2px 0 #b94fff, 2px 0 #00fff5, 0 0 40px #ff00ff80; }
+        }
+        @keyframes cpflicker { 0%,100%{opacity:1} 92%{opacity:1} 93%{opacity:0.6} 94%{opacity:1} 97%{opacity:0.85} 98%{opacity:1} }
+        @keyframes cpshimmer { 0%,100%{opacity:0.3} 50%{opacity:0.6} }
 
-      {/* 01. Rankings */}
-      <SectionNo n="01" label="Regional Comparison" accent={C.teal} />
-      <Card style={{ marginBottom: 56 }}>
-        <CardHeader title="Regional Rankings" sub="AQI levels in cities surrounding your current location" icon={Activity} iconColor={C.teal} />
-        <div style={{ padding: '0 40px 40px' }}>
-          <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={comparison} layout="vertical">
-              <XAxis type="number" hide />
-              <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: '#fff', fontSize: 16, fontWeight: 600 }} width={140} />
-              <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} itemStyle={{ color: '#000' }} contentStyle={{ color: '#000' }} />
-              <Bar dataKey="aqi" radius={[0, 10, 10, 0]} barSize={24}>
-                {comparison.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
+        .recharts-polar-grid-concentric-polygon, .recharts-polar-grid-angle line { stroke: rgba(255,0,255,0.15) !important; }
+        .recharts-polar-angle-axis-tick text { fill: ${C.textDim} !important; font-family: 'IBM Plex Mono',monospace !important; font-size: 11px !important; }
+      `}</style>
 
-      {/* 02. Local Pollutants */}
-      <SectionNo n="02" label="Local Sensor Breakdown" accent={C.blue} />
-      <Card style={{ marginBottom: 56 }}>
-        <CardHeader
-          title={`Pollutants at ${nearestStation?.name || 'Nearest Station'}`}
-          sub="Real-time concentration from a sensor 0.1km away"
-          icon={Wind} iconColor={C.blue}
-        />
-        <div style={{ padding: '0 40px 40px' }}>
-          <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={localPollutants}>
-              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#fff', fontSize: 18, fontWeight: 700 }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: C.sub, fontSize: 14 }} />
-              <Bar dataKey="value" barSize={80} shape={<WhiteHoverFixBar />}>
-                {localPollutants.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-              </Bar>
-              <Tooltip cursor={false} itemStyle={{ color: '#000' }} contentStyle={{ color: '#000' }} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
+      <div className="cp-page">
+        <div className="cp-inner">
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: 40, marginBottom: 56 }}>
+          {/* Header */}
+          <header style={{ marginBottom: 56 }}>
+            <div style={{ fontFamily:'IBM Plex Mono', fontSize:10, color:C.pink, letterSpacing:'0.3em', textTransform:'uppercase', marginBottom:10, textShadow:`0 0 10px ${C.pink}` }}>
+              ▶ SYSTEM ONLINE ◀
+            </div>
+            <h1 className="cp-title">ANALYTICS</h1>
+            <p style={{ color:C.cyan, fontFamily:'IBM Plex Mono', fontSize:'clamp(11px,3vw,14px)', marginTop:8, textShadow:`0 0 10px ${C.cyan}`, letterSpacing:'0.07em' }}>
+              ◈ SENSORS ACTIVE · {cityName.toUpperCase()}
+            </p>
+          </header>
 
-        {/* 03. WHO Radar */}
-        <div>
-          <SectionNo n="03" label="Safety Standards" accent="#ff6090" />
-          <Card>
-            <CardHeader title="WHO Exposure" sub="Local pollutants vs safety limits" icon={ShieldCheck} iconColor="#ff6090" />
-            <div style={{ height: 400 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={radarData}>
-                  <PolarGrid stroke="rgba(255,255,255,0.1)" />
-                  <PolarAngleAxis dataKey="subject" tick={{ fill: '#fff', fontSize: 14 }} />
-                  <Radar dataKey="value" stroke="#ff6090" fill="#ff6090" fillOpacity={0.3} strokeWidth={4} />
-                  <Tooltip itemStyle={{ color: '#000' }} contentStyle={{ color: '#000' }} />
-                </RadarChart>
+          {/* 01 Regional */}
+          <SectionNo n="01" label="Regional Comparison" accent={C.pink} />
+          <Card accent={C.pink} style={{ marginBottom: 40 }}>
+            <CardHeader title="Regional Rankings" sub="AQI levels in cities surrounding your location" icon={Activity} iconColor={C.pink} />
+            <div style={{ padding:'0 16px 24px' }}>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={comparison} layout="vertical" margin={{ left:0, right:16, top:8, bottom:8 }}>
+                  <XAxis type="number" hide domain={[0,'dataMax + 30']} />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false}
+                    tick={{ fill:C.text, fontSize:11, fontFamily:'IBM Plex Mono' }} width={100} />
+                  <Tooltip content={<CyberTooltip accent={C.pink} />} cursor={{ fill:'rgba(255,0,255,0.04)' }} />
+                  <Bar dataKey="aqi" barSize={20}
+                    shape={(props: any) => <CyberBar {...props} fill={comparison[props.index]?.color ?? C.pink} />}
+                  />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </Card>
-        </div>
 
-        {/* 04. Distribution */}
-        <div>
-          <SectionNo n="04" label="Regional Spread" accent={C.gold} />
-          <Card>
+          {/* 02 Pollutants */}
+          <SectionNo n="02" label="Local Sensor Breakdown" accent={C.cyan} />
+          <Card accent={C.cyan} style={{ marginBottom: 40 }}>
             <CardHeader
-              title="Nearby Quality Spread"
-              sub={`Status of all ${stations.length + allCityStations.length} stations in your region`}
-              icon={PieIcon} iconColor={C.gold}
+              title={`Pollutants @ ${nearestStation?.name || 'Nearest'}`}
+              sub="Real-time concentrations from nearest sensor"
+              icon={Wind} iconColor={C.cyan}
             />
-            <div style={{ height: 400 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={qualitySpread} innerRadius={100} outerRadius={140} paddingAngle={8} dataKey="value" activeShape={false}>
-                    {qualitySpread.map((d, i) => <Cell key={i} fill={d.color} />)}
-                  </Pie>
-                  <Tooltip itemStyle={{ color: '#000' }} contentStyle={{ color: '#000' }} />
-                </PieChart>
+            <div style={{ padding:'0 16px 24px' }}>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={localPollutants} margin={{ top:10, right:8, left:0, bottom:8 }}>
+                  <XAxis dataKey="label" axisLine={false} tickLine={false}
+                    tick={{ fill:C.text, fontSize:12, fontFamily:'IBM Plex Mono', fontWeight:600 }} />
+                  <YAxis axisLine={false} tickLine={false}
+                    tick={{ fill:C.textDim, fontSize:11, fontFamily:'IBM Plex Mono' }} width={36} />
+                  <Tooltip content={<CyberTooltip accent={C.cyan} />} cursor={{ fill:'rgba(0,255,245,0.04)' }} />
+                  <Bar dataKey="value" barSize={50}
+                    shape={(props: any) => <CyberBar {...props} fill={localPollutants[props.index]?.fill ?? C.cyan} />}
+                  />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </Card>
-        </div>
 
-      </div>
-
-      {/* 05. HuggingFace Anomaly Detection */}
-      <SectionNo n="05" label="AI Anomaly Detection" accent={C.red} />
-      <Card>
-        <CardHeader
-          title="AQI Spike Detection"
-          sub={
-            anomalyLoading
-              ? 'Running HuggingFace model on nearby stations...'
-              : modelReady
-                ? `${anomalyCount} anomalous spike${anomalyCount !== 1 ? 's' : ''} detected across ${anomalyStationData.length} stations`
-                : 'Initialising model...'
-          }
-          icon={AlertTriangle}
-          iconColor={C.red}
-          badge={<HFBadge loading={anomalyLoading} />}
-        />
-
-        {/* Anomaly stat pills */}
-        {modelReady && !anomalyLoading && (
-          <div style={{ padding: '0 32px 16px', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ padding: '6px 14px', borderRadius: 99, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', fontSize: 12, color: '#ef4444', fontFamily: 'IBM Plex Mono' }}>
-              🔴 {anomalyCount} Anomalies
+          {/* 03 + 04 two-col */}
+          <div className="cp-two-col">
+            <div>
+              <SectionNo n="03" label="Safety Standards" accent={C.yellow} />
+              <Card accent={C.yellow}>
+                <CardHeader title="WHO Exposure" sub="Pollutants vs safety limits" icon={ShieldCheck} iconColor={C.yellow} />
+                <div style={{ height:300 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RadarChart data={radarData} margin={{ top:10, right:24, bottom:10, left:24 }}>
+                      <PolarGrid stroke={`${C.yellow}20`} />
+                      <PolarAngleAxis dataKey="subject" tick={{ fill:C.text, fontSize:11, fontFamily:'IBM Plex Mono' }} />
+                      <Radar dataKey="value" stroke={C.yellow} fill={C.yellow} fillOpacity={0.15} strokeWidth={2}
+                        style={{ filter:`drop-shadow(0 0 7px ${C.yellow}80)` }} />
+                      <Tooltip content={<CyberTooltip accent={C.yellow} />} />
+                    </RadarChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
             </div>
-            <div style={{ padding: '6px 14px', borderRadius: 99, background: 'rgba(0,212,170,0.1)', border: '1px solid rgba(0,212,170,0.3)', fontSize: 12, color: C.teal, fontFamily: 'IBM Plex Mono' }}>
-              ✅ {anomalyStationData.length - anomalyCount} Normal
-            </div>
-            <div style={{ padding: '6px 14px', borderRadius: 99, background: 'rgba(124,111,205,0.1)', border: '1px solid rgba(124,111,205,0.3)', fontSize: 12, color: C.purple, fontFamily: 'IBM Plex Mono' }}>
-              🤗 Xenova/nli-deberta-v3-small
+
+            <div>
+              <SectionNo n="04" label="Regional Spread" accent={C.purple} />
+              <Card accent={C.purple}>
+                <CardHeader
+                  title="Quality Spread"
+                  sub={`All ${stations.length + allCityStations.length} stations`}
+                  icon={PieIcon} iconColor={C.purple}
+                />
+                <div style={{ height:240 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={qualitySpread} innerRadius="45%" outerRadius="65%" paddingAngle={4} dataKey="value" strokeWidth={0}>
+                        {qualitySpread.map((d, i) => (
+                          <Cell key={i} fill={d.color} style={{ filter:`drop-shadow(0 0 7px ${d.color}80)` }} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<CyberTooltip accent={C.purple} />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{ padding:'0 16px 16px', display:'flex', flexWrap:'wrap', gap:8 }}>
+                  {qualitySpread.map((d, i) => (
+                    <div key={i} style={{ display:'flex', alignItems:'center', gap:5 }}>
+                      <div style={{ width:7, height:7, background:d.color, flexShrink:0, boxShadow:`0 0 5px ${d.color}` }} />
+                      <span style={{ fontSize:10, fontFamily:'IBM Plex Mono', color:C.textDim }}>{d.name} ({d.value})</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
             </div>
           </div>
-        )}
 
-        {/* Loading state */}
-        {anomalyLoading && (
-          <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {[1, 2, 3].map(i => (
-              <div key={i} style={{ height: 36, borderRadius: 8, background: 'rgba(239,68,68,0.06)', animation: 'shimmer 1.4s ease-in-out infinite', animationDelay: `${i * 0.1}s` }} />
-            ))}
-          </div>
-        )}
+          {/* 05 Anomaly */}
+          <SectionNo n="05" label="AI Anomaly Detection" accent={C.red} />
+          <Card accent={C.red}>
+            <CardHeader
+              title="AQI Spike Detection"
+              sub={
+                anomalyLoading
+                  ? 'Running HuggingFace model...'
+                  : modelReady
+                    ? `${anomalyCount} spike${anomalyCount !== 1 ? 's' : ''} · last scan ${lastChecked ? lastChecked.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '—'} · next in ${fmtCountdown(nextCheckIn)}`
+                    : 'Initialising...'
+              }
+              icon={AlertTriangle} iconColor={C.red}
+              badge={<HFBadge loading={anomalyLoading} />}
+            />
 
-        {/* Anomaly Chart */}
-        {!anomalyLoading && anomalyChartData.length > 0 && (
-          <div style={{ padding: '0 32px 40px' }}>
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={anomalyChartData} margin={{ top: 20, right: 20, left: 0, bottom: 60 }}>
-                <XAxis
-                  dataKey="name"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: C.textDim, fontSize: 11 }}
-                  angle={-35}
-                  textAnchor="end"
-                  interval={0}
-                />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: C.sub, fontSize: 12 }} />
-                <Tooltip content={<AnomalyTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-                {/* Mean reference line */}
-                <ReferenceLine
-                  y={Math.round(anomalyChartData.reduce((a, b) => a + b.aqi, 0) / anomalyChartData.length)}
-                  stroke="rgba(255,255,255,0.2)"
-                  strokeDasharray="4 4"
-                  label={{ value: 'mean', fill: '#445566', fontSize: 11, position: 'insideTopRight' }}
-                />
-                <Bar dataKey="aqi" barSize={40}
-                  shape={(props: any) => (
-                    <AnomalyBar
-                      {...props}
-                      isAnomaly={anomalyChartData[props.index]?.isAnomaly}
-                      fill={C.teal}
-                    />
-                  )}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-
-            {/* Anomaly list below chart */}
-            {anomalyCount > 0 && (
-              <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ fontSize: 12, color: C.sub, fontFamily: 'IBM Plex Mono', marginBottom: 4 }}>FLAGGED STATIONS</div>
-                {anomalyChartData.filter(d => d.isAnomaly).map((d, i) => (
-                  <motion.div
-                    key={d.name}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.08 }}
-                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderRadius: 12, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)' }}
-                  >
-                    <AlertTriangle size={14} color="#ef4444" />
-                    <span style={{ flex: 1, color: C.text, fontSize: 14 }}>{d.name}</span>
-                    <span style={{ fontFamily: 'IBM Plex Mono', fontWeight: 700, color: '#ef4444', fontSize: 14 }}>AQI {d.aqi}</span>
-                    <span style={{ fontFamily: 'IBM Plex Mono', fontSize: 11, color: '#ef4444', padding: '2px 8px', borderRadius: 99, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)' }}>
-                      ANOMALY
-                    </span>
-                  </motion.div>
+            {modelReady && !anomalyLoading && (
+              <div style={{ padding:'0 16px 14px', display:'flex', gap:8, flexWrap:'wrap' }}>
+                {[
+                  { label:`${anomalyCount} Anomalies`,   color:C.red    },
+                  { label:`${anomalyStationData.length - anomalyCount} Normal`, color:C.green  },
+                  { label:'nli-deberta-v3-small',        color:C.purple },
+                  { label:`Next: ${fmtCountdown(nextCheckIn)}`, color:C.yellow },
+                ].map((pill, i) => (
+                  <div key={i} style={{
+                    padding:'3px 9px', borderRadius:2,
+                    background:`${pill.color}10`, border:`1px solid ${pill.color}40`,
+                    fontSize:10, color:pill.color, fontFamily:'IBM Plex Mono',
+                    textShadow:`0 0 7px ${pill.color}`, whiteSpace:'nowrap',
+                  }}>{pill.label}</div>
                 ))}
               </div>
             )}
-          </div>
-        )}
 
-        <style>{`
-          @keyframes shimmer { 0%,100%{opacity:0.4} 50%{opacity:0.7} }
-        `}</style>
-      </Card>
+            {anomalyLoading && (
+              <div style={{ padding:'16px', display:'flex', flexDirection:'column', gap:8 }}>
+                {[1,2,3].map(i => (
+                  <div key={i} style={{ height:28, borderRadius:2, background:`${C.red}08`, animation:`cpshimmer 1.4s ease-in-out infinite`, animationDelay:`${i*0.15}s` }} />
+                ))}
+              </div>
+            )}
 
-    </div>
+            {!anomalyLoading && anomalyChartData.length > 0 && (
+              <div style={{ padding:'0 16px 28px' }}>
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={anomalyChartData} margin={{ top:20, right:12, left:0, bottom:56 }}>
+                    <XAxis dataKey="name" axisLine={false} tickLine={false}
+                      tick={{ fill:C.textDim, fontSize:10, fontFamily:'IBM Plex Mono' }}
+                      angle={-35} textAnchor="end" interval={0} />
+                    <YAxis axisLine={false} tickLine={false}
+                      tick={{ fill:C.sub, fontSize:10, fontFamily:'IBM Plex Mono' }} width={32} />
+                    <Tooltip content={<AnomalyTooltip />} cursor={{ fill:'rgba(255,45,85,0.04)' }} />
+                    <ReferenceLine
+                      y={Math.round(anomalyChartData.reduce((a,b) => a+b.aqi, 0) / Math.max(1, anomalyChartData.length))}
+                      stroke={`${C.yellow}50`} strokeDasharray="4 4"
+                      label={{ value:'MEAN', fill:C.yellow, fontSize:8, fontFamily:'IBM Plex Mono', position:'insideTopRight' }}
+                    />
+                    <Bar dataKey="aqi" barSize={32}
+                      shape={(props: any) => <AnomalyBar {...props} isAnomaly={anomalyChartData[props.index]?.isAnomaly} />}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+
+                {anomalyCount > 0 && (
+                  <div style={{ marginTop:16, display:'flex', flexDirection:'column', gap:8 }}>
+                    <div style={{ fontSize:9, color:C.sub, fontFamily:'IBM Plex Mono', letterSpacing:'0.14em', textTransform:'uppercase', marginBottom:4 }}>▶ Flagged Stations</div>
+                    {anomalyChartData.filter(d => d.isAnomaly).map((d, i) => (
+                      <motion.div key={d.name}
+                        initial={{ opacity:0, x:-10 }} animate={{ opacity:1, x:0 }} transition={{ delay:i*0.08 }}
+                        style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 14px', borderRadius:2, background:'rgba(255,45,85,0.06)', border:`1px solid ${C.red}30`, flexWrap:'wrap' }}
+                      >
+                        <AlertTriangle size={12} color={C.red} style={{ filter:`drop-shadow(0 0 4px ${C.red})`, flexShrink:0 }} />
+                        <span style={{ flex:1, minWidth:80, color:C.text, fontSize:13, fontFamily:'IBM Plex Mono' }}>{d.name}</span>
+                        <span style={{ fontFamily:'IBM Plex Mono', fontWeight:700, color:C.red, fontSize:13, textShadow:`0 0 7px ${C.red}` }}>AQI {d.aqi}</span>
+                        <span style={{ fontFamily:'IBM Plex Mono', fontSize:9, color:C.red, padding:'2px 7px', borderRadius:2, background:`${C.red}15`, border:`1px solid ${C.red}40`, letterSpacing:'0.1em' }}>ANOMALY</span>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+        </div>
+      </div>
+    </>
   );
 };
 

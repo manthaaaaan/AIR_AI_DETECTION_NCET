@@ -50,42 +50,34 @@ async function fetchWeatherCurrent(lat: number, lng: number) {
   return data.current;
 }
 
-// ── Throttled Nominatim: one request at a time, 1.1s apart ───
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// ── BigDataCloud reverse geocoding — CORS friendly, no rate limit, free ──────
+// Replaces Nominatim which blocks localhost and has strict rate limits
+async function reverseGeocode(lat: number, lon: number, fallback: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+    );
+    const data = await res.json();
+    // Pick the most specific available name
+    const name =
+      data.locality           ||
+      data.city               ||
+      data.principalSubdivision ||
+      data.countryName        ||
+      fallback;
+    return name;
+  } catch {
+    return fallback;
+  }
+}
 
-async function getAreaNamesThrottled(
+// Fetch all area names in parallel — BigDataCloud allows concurrent requests
+async function getAreaNames(
   points: { lat: number; lon: number; fallback: string }[]
 ): Promise<string[]> {
-  const results: string[] = [];
-  for (const pt of points) {
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${pt.lat}&lon=${pt.lon}&format=json`,
-        { headers: { 'Accept-Language': 'en' } }
-      );
-      const data = await res.json();
-      const addr = data.address || {};
-      const name =
-        addr.neighbourhood   ||
-        addr.suburb          ||
-        addr.village         ||
-        addr.town            ||
-        addr.city_district   ||
-        addr.city            ||
-        addr.county          ||
-        addr.state_district  ||
-        addr.state           ||
-        pt.fallback;
-      results.push(name);
-    } catch {
-      results.push(pt.fallback);
-    }
-    // Wait 1.1s before next request to respect Nominatim rate limit
-    if (points.indexOf(pt) < points.length - 1) {
-      await sleep(1100);
-    }
-  }
-  return results;
+  return Promise.all(
+    points.map(pt => reverseGeocode(pt.lat, pt.lon, pt.fallback))
+  );
 }
 
 function buildStation(
@@ -166,8 +158,8 @@ export async function fetchLiveRadiusStations(
     }),
   ];
 
-  // ── Fetch all names throttled (1 per second) ──────────────
-  const areaNames = await getAreaNamesThrottled(
+  // Fetch all names in parallel — no throttling needed with BigDataCloud
+  const areaNames = await getAreaNames(
     points.map((pt, i) => ({
       lat:      pt.lat,
       lon:      pt.lng,
@@ -237,7 +229,7 @@ export async function fetchStationByCoords(
   const [aq, weather, areaName] = await Promise.all([
     fetchOpenMeteo(lat, lng),
     fetchWeatherCurrent(lat, lng),
-    getAreaNamesThrottled([{ lat, lon: lng, fallback: 'Selected Location' }]).then(r => r[0]),
+    reverseGeocode(lat, lng, 'Selected Location'),
   ]);
   const pm25 = aq?.pm2_5 ?? 0;
   return {

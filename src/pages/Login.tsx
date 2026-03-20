@@ -40,9 +40,36 @@ const Login = () => {
           mask-image:radial-gradient(ellipse at 50% 40%,black 20%,transparent 75%);
         }
         .pred-vignette { position:absolute;inset:0;background:radial-gradient(ellipse at 50% 50%,transparent 30%,rgba(5,8,16,0.65) 100%); }
+
+        .login-wrapper {
+          position: relative; z-index: 1;
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: 'Syne', sans-serif;
+          padding: 24px 16px;
+          box-sizing: border-box;
+        }
+        .login-card {
+          background: rgba(8,14,24,0.75);
+          backdrop-filter: blur(24px);
+          border: 1px solid rgba(0,212,170,0.25);
+          border-radius: 24px;
+          padding: 64px 56px;
+          text-align: center;
+          max-width: 480px;
+          width: 100%;
+          box-shadow: 0 0 40px rgba(0,212,170,0.12), 0 0 80px rgba(0,212,170,0.06), inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+        @media (max-width: 767px) {
+          .login-card {
+            padding: 28px 20px;
+            border-radius: 18px;
+          }
+        }
       `}</style>
 
-      {/* Background */}
       <div className="pred-bg">
         <div className="pred-orb pred-orb-1" />
         <div className="pred-orb pred-orb-2" />
@@ -51,45 +78,27 @@ const Login = () => {
         <div className="pred-vignette" />
       </div>
 
-      {/* Login card */}
-      <div style={{
-        position: 'relative', zIndex: 1,
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontFamily: 'Syne, sans-serif',
-      }}>
+      <div className="login-wrapper">
         <motion.div
+          className="login-card"
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: 'easeOut', delay: 0.15 }}
-          style={{
-            background: 'rgba(8,14,24,0.75)',
-            backdropFilter: 'blur(24px)',
-            border: '1px solid rgba(0,212,170,0.25)',
-            borderRadius: 24,
-            padding: '64px 56px',
-            textAlign: 'center',
-            maxWidth: 480,
-            width: '100%',
-            boxShadow: '0 0 40px rgba(0,212,170,0.12), 0 0 80px rgba(0,212,170,0.06), inset 0 1px 0 rgba(255,255,255,0.06)',
-          }}
         >
           {/* Logo */}
-          <div style={{ marginBottom: 36 }}>
-            <div style={{ fontSize: 38, fontWeight: 700, color: '#f8fafc', letterSpacing: '0.03em', fontFamily: 'inherit' }}>
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 38, fontWeight: 700, color: '#f8fafc', letterSpacing: '0.03em' }}>
               <span style={{ color: '#00d4aa' }}>Aero</span>Sense
             </div>
-            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8, letterSpacing: '0.15em', fontWeight: 500 }}>
+            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6, letterSpacing: '0.15em', fontWeight: 500 }}>
               REAL-TIME AIR QUALITY MONITOR
             </div>
           </div>
 
           {/* Divider */}
-          <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', marginBottom: 36 }} />
+          <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', marginBottom: 24 }} />
 
-          <p style={{ fontSize: 16, color: '#cbd5e1', marginBottom: 28, letterSpacing: '0.04em', fontWeight: 500 }}>
+          <p style={{ fontSize: 15, color: '#cbd5e1', marginBottom: 20, letterSpacing: '0.04em', fontWeight: 500 }}>
             Sign in to access your dashboard
           </p>
 
@@ -98,8 +107,8 @@ const Login = () => {
             onClick={signInWithGoogle}
             style={{
               display: 'flex', alignItems: 'center', gap: 12,
-              padding: '16px 28px', background: '#fff', border: 'none',
-              borderRadius: 10, cursor: 'pointer', fontSize: 16, fontWeight: 600,
+              padding: '14px 28px', background: '#fff', border: 'none',
+              borderRadius: 10, cursor: 'pointer', fontSize: 15, fontWeight: 600,
               color: '#1f2937', width: '100%', justifyContent: 'center',
               transition: 'opacity 0.2s', fontFamily: 'Syne, sans-serif',
             }}
@@ -115,13 +124,20 @@ const Login = () => {
             Continue with Google
           </button>
 
-          <p style={{ fontSize: 13, color: '#64748b', marginTop: 28, lineHeight: 1.6, fontWeight: 400 }}>
+          <p style={{ fontSize: 12, color: '#64748b', marginTop: 16, lineHeight: 1.6, fontWeight: 400 }}>
             By signing in you agree to our terms of service and privacy policy.
           </p>
+
+          {/* Team credit */}
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <p style={{ fontSize: 12, color: '#334155', fontWeight: 500, letterSpacing: '0.06em', margin: 0 }}>
+              Built with ♥ by <span style={{ color: '#00d4aa', fontWeight: 700 }}>Team GitHappens</span>
+            </p>
+          </div>
         </motion.div>
       </div>
     </>
   );
 };
 
-export default Login;   
+export default Login;
