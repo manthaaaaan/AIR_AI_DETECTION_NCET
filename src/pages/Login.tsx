@@ -131,7 +131,7 @@ const Login = () => {
           {/* Team credit */}
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
             <p style={{ fontSize: 12, color: '#334155', fontWeight: 500, letterSpacing: '0.06em', margin: 0 }}>
-              Built with ♥ by <span style={{ color: '#00d4aa', fontWeight: 700 }}>Team GitHappens</span>
+              Built  by <span style={{ color: '#00d4aa', fontWeight: 700 }}>Team GitHappens</span>
             </p>
           </div>
         </motion.div>
