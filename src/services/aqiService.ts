@@ -50,72 +50,76 @@ async function fetchWeatherCurrent(lat: number, lng: number) {
   return data.current;
 }
 
-// ── BigDataCloud reverse geocoding — CORS friendly, no rate limit, free ──────
-// Replaces Nominatim which blocks localhost and has strict rate limits
 async function reverseGeocode(lat: number, lon: number, fallback: string): Promise<string> {
   try {
     const res = await fetch(
       `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
     );
     const data = await res.json();
-    // Pick the most specific available name
-    const name =
-      data.locality           ||
-      data.city               ||
-      data.principalSubdivision ||
-      data.countryName        ||
-      fallback;
-    return name;
+    return (
+      data.locality              ||
+      data.city                  ||
+      data.principalSubdivision  ||
+      data.countryName           ||
+      fallback
+    );
   } catch {
     return fallback;
   }
 }
 
-// Fetch all area names in parallel — BigDataCloud allows concurrent requests
-async function getAreaNames(
-  points: { lat: number; lon: number; fallback: string }[]
-): Promise<string[]> {
-  return Promise.all(
-    points.map(pt => reverseGeocode(pt.lat, pt.lon, pt.fallback))
-  );
+async function resolveUniquePoint(
+  centerLat: number,
+  centerLng: number,
+  takenNames: Set<string>,
+  angle: number,
+  startRadiusKm: number
+): Promise<{ lat: number; lng: number; name: string }> {
+  const KM_PER_DEG_LAT = 111;
+  const KM_PER_DEG_LNG = 111 * Math.cos(centerLat * Math.PI / 180);
+  const MAX_ATTEMPTS = 5;
+
+  let radius = startRadiusKm;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const lat = centerLat + (radius * Math.cos(angle)) / KM_PER_DEG_LAT;
+    const lng = centerLng + (radius * Math.sin(angle)) / KM_PER_DEG_LNG;
+    const name = await reverseGeocode(lat, lng, '');
+
+    if (name && !takenNames.has(name.toLowerCase())) {
+      takenNames.add(name.toLowerCase());
+      return { lat, lng, name };
+    }
+    radius *= 2;
+  }
+
+  const lat = centerLat + (radius * Math.cos(angle)) / 111;
+  const lng = centerLng + (radius * Math.sin(angle)) / (111 * Math.cos(centerLat * Math.PI / 180));
+  const fallbackName = `Outskirts ${Math.round(angle * 180 / Math.PI)}°`;
+  takenNames.add(fallbackName.toLowerCase());
+  return { lat, lng, name: fallbackName };
 }
 
-function buildStation(
-  city: typeof majorCities[0],
-  aq: any,
-  weather: any
-): SensorStation {
-  const pm25 = aq?.pm2_5             ?? 0;
-  const pm10 = aq?.pm10              ?? 0;
-  const no2  = aq?.nitrogen_dioxide  ?? 0;
-  const co   = aq?.carbon_monoxide   ?? 0;
-  const o3   = aq?.ozone             ?? 0;
-  const so2  = aq?.sulphur_dioxide   ?? 0;
+function buildStation(city: typeof majorCities[0], aq: any, weather: any): SensorStation {
+  const pm25 = aq?.pm2_5            ?? 0;
+  const pm10 = aq?.pm10             ?? 0;
+  const no2  = aq?.nitrogen_dioxide ?? 0;
+  const co   = aq?.carbon_monoxide  ?? 0;
+  const o3   = aq?.ozone            ?? 0;
+  const so2  = aq?.sulphur_dioxide  ?? 0;
   return {
-    id:       city.id,
-    name:     city.name,
-    lat:      city.lat,
-    lng:      city.lng,
-    aqi:      pm25ToAqi(pm25),
-    pm25:     +pm25.toFixed(1),
-    pm10:     +pm10.toFixed(1),
-    no2:      +no2.toFixed(1),
-    co:       +(co / 1000).toFixed(2),
-    o3:       +o3.toFixed(1),
-    so2:      +so2.toFixed(1),
-    temp:     weather?.temperature_2m       ?? 0,
-    humidity: weather?.relative_humidity_2m ?? 0,
-    trend:    'stable' as const,
+    id: city.id, name: city.name, lat: city.lat, lng: city.lng,
+    aqi: pm25ToAqi(pm25),
+    pm25: +pm25.toFixed(1), pm10: +pm10.toFixed(1), no2: +no2.toFixed(1),
+    co: +(co / 1000).toFixed(2), o3: +o3.toFixed(1), so2: +so2.toFixed(1),
+    temp: weather?.temperature_2m ?? 0, humidity: weather?.relative_humidity_2m ?? 0,
+    trend: 'stable' as const,
   };
 }
 
 export async function fetchAllCityStations(): Promise<SensorStation[]> {
   const results = await Promise.allSettled(
     majorCities.map(async city => {
-      const [aq, weather] = await Promise.all([
-        fetchOpenMeteo(city.lat, city.lng),
-        fetchWeatherCurrent(city.lat, city.lng),
-      ]);
+      const [aq, weather] = await Promise.all([fetchOpenMeteo(city.lat, city.lng), fetchWeatherCurrent(city.lat, city.lng)]);
       return buildStation(city, aq, weather);
     })
   );
@@ -128,9 +132,10 @@ export async function fetchLiveRadiusStations(
   centerLat: number,
   centerLng: number
 ): Promise<{ stations: SensorStation[]; averageAQI: number }> {
-  const [aq, weather] = await Promise.all([
+  const [aq, weather, centerName] = await Promise.all([
     fetchOpenMeteo(centerLat, centerLng),
     fetchWeatherCurrent(centerLat, centerLng),
+    reverseGeocode(centerLat, centerLng, 'Your Area'),
   ]);
 
   const pm25 = aq?.pm2_5            ?? 0;
@@ -140,111 +145,69 @@ export async function fetchLiveRadiusStations(
   const o3   = aq?.ozone            ?? 0;
   const so2  = aq?.sulphur_dioxide  ?? 0;
 
-  const KM_PER_DEG_LAT = 111;
-  const KM_PER_DEG_LNG = 111 * Math.cos(centerLat * Math.PI / 180);
-  const RADIUS_KM = 8;
+  const takenNames = new Set<string>([centerName.toLowerCase()]);
+  // 12 evenly-spaced angles
+  const ANGLES = Array.from({ length: 12 }, (_, i) => (i / 12) * Math.PI * 2);
 
-  const points = [
-    { lat: centerLat, lng: centerLng, id: 's-center', isCenter: true },
-    ...Array.from({ length: 6 }, (_, i) => {
-      const angle = (i / 6) * Math.PI * 2;
-      const r = i % 2 === 0 ? 4 : RADIUS_KM;
-      return {
-        lat: centerLat + (r * Math.cos(angle) / KM_PER_DEG_LAT),
-        lng: centerLng + (r * Math.sin(angle) / KM_PER_DEG_LNG),
-        id: `s-live-${i}`,
-        isCenter: false,
-      };
-    }),
+  const surroundingPoints: { lat: number; lng: number; name: string }[] = [];
+  for (const angle of ANGLES) {
+    const pt = await resolveUniquePoint(centerLat, centerLng, takenNames, angle, 8);
+    surroundingPoints.push(pt);
+  }
+
+  const allPoints = [
+    { lat: centerLat, lng: centerLng, id: 's-center', name: centerName, isCenter: true },
+    ...surroundingPoints.map((pt, i) => ({ ...pt, id: `s-live-${i}`, isCenter: false })),
   ];
 
-  // Fetch all names in parallel — no throttling needed with BigDataCloud
-  const areaNames = await getAreaNames(
-    points.map((pt, i) => ({
-      lat:      pt.lat,
-      lon:      pt.lng,
-      fallback: pt.isCenter ? 'Your Area' : `Area ${i}`,
-    }))
-  );
-
-  const generatedStations: SensorStation[] = points.map((pt, i) => {
+  const generatedStations: SensorStation[] = allPoints.map((pt, i) => {
     const variance = pt.isCenter ? 1 : 0.85 + Math.abs(Math.sin(i * 123.4)) * 0.3;
     const vPm25 = Math.max(0, Math.round(pm25 * variance));
     return {
-      id:       pt.id,
-      name:     areaNames[i],
-      lat:      pt.lat,
-      lng:      pt.lng,
-      aqi:      pm25ToAqi(vPm25),
-      pm25:     vPm25,
-      pm10:     Math.max(0, Math.round(pm10 * variance)),
-      no2:      Math.max(0, Math.round(no2  * variance)),
-      co:       +((co * variance) / 1000).toFixed(2),
-      o3:       Math.max(0, Math.round(o3   * variance)),
-      so2:      Math.max(0, Math.round(so2  * variance)),
-      temp:     weather?.temperature_2m       ?? 0,
+      id: pt.id, name: pt.name, lat: pt.lat, lng: pt.lng,
+      aqi: pm25ToAqi(vPm25), pm25: vPm25,
+      pm10: Math.max(0, Math.round(pm10 * variance)),
+      no2:  Math.max(0, Math.round(no2  * variance)),
+      co:   +((co * variance) / 1000).toFixed(2),
+      o3:   Math.max(0, Math.round(o3   * variance)),
+      so2:  Math.max(0, Math.round(so2  * variance)),
+      temp: weather?.temperature_2m ?? 0,
       humidity: weather?.relative_humidity_2m ?? 0,
-      trend:    (variance > 1 ? 'up' : 'down') as 'up' | 'down',
+      trend: (variance > 1 ? 'up' : 'down') as 'up' | 'down',
     };
   });
 
-  const avgAQI = Math.round(
-    generatedStations.reduce((s, x) => s + x.aqi, 0) / generatedStations.length
-  );
-
+  const avgAQI = Math.round(generatedStations.reduce((s, x) => s + x.aqi, 0) / generatedStations.length);
   return { stations: generatedStations, averageAQI: avgAQI };
 }
 
-export async function fetchSingleStation(
-  lat: number,
-  lng: number,
-  knownName: string
-): Promise<SensorStation> {
-  const [aq, weather] = await Promise.all([
-    fetchOpenMeteo(lat, lng),
-    fetchWeatherCurrent(lat, lng),
-  ]);
+export async function fetchSingleStation(lat: number, lng: number, knownName: string): Promise<SensorStation> {
+  const [aq, weather] = await Promise.all([fetchOpenMeteo(lat, lng), fetchWeatherCurrent(lat, lng)]);
   const pm25 = aq?.pm2_5 ?? 0;
   return {
-    id:       `search-${lat}-${lng}`,
-    name:     knownName,
-    lat, lng,
-    aqi:      pm25ToAqi(pm25),
-    pm25:     +pm25.toFixed(1),
-    pm10:     +(aq?.pm10 ?? 0).toFixed(1),
-    no2:      +(aq?.nitrogen_dioxide ?? 0).toFixed(1),
-    co:       +((aq?.carbon_monoxide ?? 0) / 1000).toFixed(2),
-    o3:       +(aq?.ozone ?? 0).toFixed(1),
-    so2:      +(aq?.sulphur_dioxide ?? 0).toFixed(1),
-    temp:     weather?.temperature_2m       ?? 0,
-    humidity: weather?.relative_humidity_2m ?? 0,
-    trend:    'stable',
+    id: `search-${lat}-${lng}`, name: knownName, lat, lng,
+    aqi: pm25ToAqi(pm25), pm25: +pm25.toFixed(1),
+    pm10: +(aq?.pm10 ?? 0).toFixed(1), no2: +(aq?.nitrogen_dioxide ?? 0).toFixed(1),
+    co: +((aq?.carbon_monoxide ?? 0) / 1000).toFixed(2), o3: +(aq?.ozone ?? 0).toFixed(1),
+    so2: +(aq?.sulphur_dioxide ?? 0).toFixed(1),
+    temp: weather?.temperature_2m ?? 0, humidity: weather?.relative_humidity_2m ?? 0,
+    trend: 'stable',
   };
 }
 
-export async function fetchStationByCoords(
-  lat: number,
-  lng: number
-): Promise<SensorStation> {
+export async function fetchStationByCoords(lat: number, lng: number): Promise<SensorStation> {
   const [aq, weather, areaName] = await Promise.all([
-    fetchOpenMeteo(lat, lng),
-    fetchWeatherCurrent(lat, lng),
+    fetchOpenMeteo(lat, lng), fetchWeatherCurrent(lat, lng),
     reverseGeocode(lat, lng, 'Selected Location'),
   ]);
   const pm25 = aq?.pm2_5 ?? 0;
   return {
-    id:       `clicked-${lat}-${lng}`,
-    name:     areaName,
-    lat, lng,
-    aqi:      pm25ToAqi(pm25),
-    pm25:     +pm25.toFixed(1),
-    pm10:     +(aq?.pm10 ?? 0).toFixed(1),
-    no2:      +(aq?.nitrogen_dioxide ?? 0).toFixed(1),
-    co:       +((aq?.carbon_monoxide ?? 0) / 1000).toFixed(2),
-    o3:       +(aq?.ozone ?? 0).toFixed(1),
-    so2:      +(aq?.sulphur_dioxide ?? 0).toFixed(1),
-    temp:     weather?.temperature_2m       ?? 0,
-    humidity: weather?.relative_humidity_2m ?? 0,
-    trend:    'stable',
+    id: `clicked-${lat}-${lng}`, name: areaName, lat, lng,
+    aqi: pm25ToAqi(pm25), pm25: +pm25.toFixed(1),
+    pm10: +(aq?.pm10 ?? 0).toFixed(1), no2: +(aq?.nitrogen_dioxide ?? 0).toFixed(1),
+    co: +((aq?.carbon_monoxide ?? 0) / 1000).toFixed(2), o3: +(aq?.ozone ?? 0).toFixed(1),
+    so2: +(aq?.sulphur_dioxide ?? 0).toFixed(1),
+    temp: weather?.temperature_2m ?? 0, humidity: weather?.relative_humidity_2m ?? 0,
+    trend: 'stable',
   };
 }

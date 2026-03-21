@@ -20,6 +20,16 @@ interface AQIChartPoint {
   aqi: number;
 }
 
+// ── Same pm25→AQI formula as aqiService.ts ─────────────────────
+function pm25ToAqi(pm25: number): number {
+  if (pm25 <= 12)    return Math.round((50 / 12) * pm25);
+  if (pm25 <= 35.4)  return Math.round(50  + ((100 - 51)  / (35.4  - 12.1))  * (pm25 - 12.1));
+  if (pm25 <= 55.4)  return Math.round(100 + ((150 - 101) / (55.4  - 35.5))  * (pm25 - 35.5));
+  if (pm25 <= 150.4) return Math.round(150 + ((200 - 151) / (150.4 - 55.5))  * (pm25 - 55.5));
+  if (pm25 <= 250.4) return Math.round(200 + ((300 - 201) / (250.4 - 150.5)) * (pm25 - 150.5));
+  return Math.round(300 + ((400 - 301) / (350.4 - 250.5)) * (pm25 - 250.5));
+}
+
 // ── Quick prompts ──────────────────────────────────────────────
 const QUICK_PROMPTS = [
   "Is it safe to go for a run today?",
@@ -30,7 +40,7 @@ const QUICK_PROMPTS = [
   "Should I use an air purifier?",
 ];
 
-// ── Fetch past 24 hours of us_aqi from Open-Meteo ─────────────
+// ── Fetch past 24 hours of pm2_5 → convert to app AQI ─────────
 async function fetchPast24Hours(lat: number, lon: number): Promise<AQIChartPoint[]> {
   const now       = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -41,16 +51,16 @@ async function fetchPast24Hours(lat: number, lon: number): Promise<AQIChartPoint
   const res = await fetch(
     `https://air-quality-api.open-meteo.com/v1/air-quality` +
     `?latitude=${lat}&longitude=${lon}` +
-    `&hourly=us_aqi` +
+    `&hourly=pm2_5` +
     `&start_date=${fmt(yesterday)}` +
     `&end_date=${fmt(now)}` +
     `&timezone=auto` +
     `&domains=cams_global`
   );
   if (!res.ok) throw new Error(`Open-Meteo fetch failed: ${res.status}`);
-  const data  = await res.json();
-  const times: string[] = data.hourly?.time   ?? [];
-  const aqis:  number[] = data.hourly?.us_aqi ?? [];
+  const data   = await res.json();
+  const times: string[] = data.hourly?.time  ?? [];
+  const pm25s:  number[] = data.hourly?.pm2_5 ?? [];
 
   now.setMinutes(0, 0, 0);
 
@@ -64,13 +74,13 @@ async function fetchPast24Hours(lat: number, lon: number): Promise<AQIChartPoint
 
   return times.slice(startIdx, endIdx).map((t, i) => ({
     hour: `${new Date(t).getHours().toString().padStart(2, '0')}:00`,
-    aqi:  aqis[startIdx + i] ?? 0,
+    aqi:  pm25ToAqi(pm25s[startIdx + i] ?? 0),
   }));
 }
 
-// ── Fetch next 24 hours forecast from Open-Meteo ──────────────
+// ── Fetch next 24 hours forecast → convert to app AQI ─────────
 async function fetchNext24Hours(lat: number, lon: number): Promise<AQIChartPoint[]> {
-  const now     = new Date();
+  const now      = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
   const fmt = (d: Date) =>
@@ -79,20 +89,19 @@ async function fetchNext24Hours(lat: number, lon: number): Promise<AQIChartPoint
   const res = await fetch(
     `https://air-quality-api.open-meteo.com/v1/air-quality` +
     `?latitude=${lat}&longitude=${lon}` +
-    `&hourly=us_aqi` +
+    `&hourly=pm2_5` +
     `&start_date=${fmt(now)}` +
     `&end_date=${fmt(tomorrow)}` +
     `&timezone=auto` +
     `&domains=cams_global`
   );
   if (!res.ok) throw new Error(`Open-Meteo forecast fetch failed: ${res.status}`);
-  const data  = await res.json();
-  const times: string[] = data.hourly?.time   ?? [];
-  const aqis:  number[] = data.hourly?.us_aqi ?? [];
+  const data   = await res.json();
+  const times: string[] = data.hourly?.time  ?? [];
+  const pm25s:  number[] = data.hourly?.pm2_5 ?? [];
 
   now.setMinutes(0, 0, 0);
 
-  // Find current hour index
   let nowIdx = -1;
   for (let i = 0; i < times.length; i++) {
     if (new Date(times[i]) >= now) { nowIdx = i; break; }
@@ -103,7 +112,7 @@ async function fetchNext24Hours(lat: number, lon: number): Promise<AQIChartPoint
 
   return times.slice(startIdx, endIdx).map((t, i) => ({
     hour: new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
-    aqi:  aqis[startIdx + i] ?? 0,
+    aqi:  pm25ToAqi(pm25s[startIdx + i] ?? 0),
   }));
 }
 
@@ -303,11 +312,11 @@ const AQIChart = ({ cityName, chartData, currentAQI }: {
 const Advisory = () => {
   const { liveAvgAQI, cityAQI, stations, alerts, cityName, userCoords } = useAirQuality();
 
-  const [messages,    setMessages]    = useState<ChatMessage[]>([]);
-  const [input,       setInput]       = useState('');
-  const [loading,     setLoading]     = useState(false);
-  const [chatStarted, setChatStarted] = useState(false);
-  const [chartData,   setChartData]   = useState<AQIChartPoint[]>([]);
+  const [messages,     setMessages]     = useState<ChatMessage[]>([]);
+  const [input,        setInput]        = useState('');
+  const [loading,      setLoading]      = useState(false);
+  const [chatStarted,  setChatStarted]  = useState(false);
+  const [chartData,    setChartData]    = useState<AQIChartPoint[]>([]);
   const [forecastData, setForecastData] = useState<AQIChartPoint[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -318,10 +327,9 @@ const Advisory = () => {
   const targetStations = localStations.length > 0 ? localStations : stations;
   const peakStation    = [...targetStations].sort((a, b) => b.aqi - a.aqi)[0] || { name: 'N/A', aqi: 0 };
   const lowestStation  = [...targetStations].sort((a, b) => a.aqi - b.aqi)[0] || { name: 'N/A', aqi: 0 };
-  const cat = getAQICategory(activeAQI);
+  const cat      = getAQICategory(activeAQI);
   const aqiColor = getAQIColor(activeAQI);
 
-  // ── Fetch past 24h chart data ──────────────────────────────
   useEffect(() => {
     const [lat, lon] = userCoords;
     if (!lat || !lon) return;

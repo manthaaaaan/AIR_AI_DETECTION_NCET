@@ -22,13 +22,13 @@ const LAYERS: { key: LayerKey; label: string; unit: string; max: number; desc: s
 ];
 
 const MAP_THEMES = [
-  { id: 'dark',       label: 'Dark',        preview: '#0a0e14', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                                 attribution: '&copy; CARTO' },
-  { id: 'voyager',    label: 'Google Maps', preview: '#e8f0d8', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',                      attribution: '&copy; CARTO' },
-  { id: 'light',      label: 'Light',       preview: '#f5f5f0', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',                                attribution: '&copy; CARTO' },
-  { id: 'satellite',  label: 'Satellite',   preview: '#1a2a1a', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: '&copy; Esri' },
-  { id: 'terrain',    label: 'Terrain',     preview: '#c8d8a8', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',attribution: '&copy; Esri' },
-  { id: 'watercolor', label: 'Watercolor',  preview: '#d4e8f0', url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',                          attribution: 'Stamen Design' },
-  { id: 'osm',        label: 'Street',      preview: '#f0e8d8', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',                                            attribution: '&copy; OpenStreetMap' },
+  { id: 'dark',       label: 'Dark',        preview: '#0a0e14', isLight: false, url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                                 attribution: '&copy; CARTO' },
+  { id: 'voyager',    label: 'Google Maps', preview: '#e8f0d8', isLight: true,  url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',                      attribution: '&copy; CARTO' },
+  { id: 'light',      label: 'Light',       preview: '#f5f5f0', isLight: true,  url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',                                attribution: '&copy; CARTO' },
+  { id: 'satellite',  label: 'Satellite',   preview: '#1a2a1a', isLight: false, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: '&copy; Esri' },
+  { id: 'terrain',    label: 'Terrain',     preview: '#c8d8a8', isLight: true,  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',attribution: '&copy; Esri' },
+  { id: 'watercolor', label: 'Watercolor',  preview: '#d4e8f0', isLight: true,  url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',                          attribution: 'Stamen Design' },
+  { id: 'osm',        label: 'Street',      preview: '#f0e8d8', isLight: true,  url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',                                            attribution: '&copy; OpenStreetMap' },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -338,8 +338,7 @@ const Sparkline = ({ baseAqi, currentHour, curve }: { baseAqi: number; currentHo
   );
 };
 
-// ── Panel Content — TOP LEVEL so it never remounts ───────────
-// Defined outside Hotspots to ensure stable component identity across renders
+// ── Panel Content ─────────────────────────────────────────────
 interface PanelProps {
   worstColor: string;
   worstThreat: { label: string; color: string; bg: string };
@@ -367,7 +366,6 @@ const PanelContent = ({
   localStations, hourlyCurve,
 }: PanelProps) => (
   <>
-    {/* Header */}
     <div style={{ padding:'24px 20px 20px', borderBottom:'1px solid rgba(255,255,255,0.04)' }}>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
         <Flame size={32} style={{ color:worstColor, filter:`drop-shadow(0 0 10px ${worstColor}88)` }} />
@@ -396,7 +394,6 @@ const PanelContent = ({
       </div>
     </div>
 
-    {/* Worst zone */}
     {worst && (
       <div style={{ padding:'16px 20px', borderBottom:'1px solid rgba(255,255,255,0.03)' }}>
         <motion.div key={`worst-${hour}`} initial={{ opacity:0.7, scale:0.98 }} animate={{ opacity:1, scale:1 }}
@@ -420,7 +417,6 @@ const PanelContent = ({
       </div>
     )}
 
-    {/* Peak hour warning */}
     {isPeakHour && (
       <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }}
         style={{ margin:'0 20px 16px', padding:'12px 16px', borderRadius:12, background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)', display:'flex', alignItems:'center', gap:10 }}>
@@ -431,7 +427,6 @@ const PanelContent = ({
       </motion.div>
     )}
 
-    {/* Overlay selector */}
     <div style={{ padding:'16px 20px', borderBottom:'1px solid rgba(255,255,255,0.03)' }}>
       <div style={{ fontFamily:'IBM Plex Mono, monospace', fontSize:12, fontWeight:700, color:'#64748b', letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:14 }}>Overlay Metric</div>
       <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
@@ -447,7 +442,6 @@ const PanelContent = ({
       </div>
     </div>
 
-    {/* Threat board */}
     <div style={{ padding:'16px 20px', flex:1 }}>
       <div style={{ fontFamily:'IBM Plex Mono, monospace', fontSize:12, fontWeight:700, color:'#64748b', letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:14 }}>Threat Board · Top {top5.length}</div>
       <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
@@ -460,7 +454,6 @@ const PanelContent = ({
       </div>
     </div>
 
-    {/* AQI Legend */}
     <div style={{ padding:'16px 20px', borderTop:'1px solid rgba(255,255,255,0.03)' }}>
       <div style={{ fontFamily:'IBM Plex Mono, monospace', fontSize:12, fontWeight:700, color:'#64748b', letterSpacing:'0.12em', textTransform:'uppercase', marginBottom:12 }}>AQI Scale</div>
       {[
@@ -490,9 +483,8 @@ const Hotspots = () => {
   const [userLoc,         setUserLoc]         = useState<[number, number] | null>(null);
   const [isLocating,      setIsLocating]      = useState(false);
   const [tick,            setTick]            = useState(0);
-  const [activeTheme,     setActiveTheme]     = useState('dark');
+  const [activeTheme,     setActiveTheme]     = useState('terrain');
   const [panelOpen,       setPanelOpen]       = useState(false);
-  // Sync init so desktop panel never flickers on first render
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -519,6 +511,14 @@ const Hotspots = () => {
     );
   };
 
+  const currentTheme = MAP_THEMES.find(t => t.id === activeTheme) ?? MAP_THEMES[0];
+  const isLight      = currentTheme.isLight;
+
+  // Scan line color: subtle dark stroke on light maps, orange glow on dark maps
+  const scanLineColor = isLight
+    ? 'rgba(0,0,0,0.12)'
+    : 'rgba(249,115,22,0.35)';
+
   const localStations  = stations.filter(s => !s.id.startsWith('init-') && s.id !== 's-center');
   const hourlyCurve    = useMemo(() => buildRealCurve(owmAir?.past ?? []), [owmAir?.past]);
   const isRealCurve    = (owmAir?.past?.length ?? 0) > 0;
@@ -533,9 +533,7 @@ const Hotspots = () => {
   const isLiveHour     = hour === new Date().getHours();
   const peakHours      = useMemo(() => { const e = Object.entries(hourlyCurve).map(([h,v])=>({h:+h,v})); return new Set(e.sort((a,b)=>b.v-a.v).slice(0,3).map(e=>e.h)); }, [hourlyCurve]);
   const isPeakHour     = peakHours.has(hour);
-  const currentTheme   = MAP_THEMES.find(t => t.id === activeTheme) ?? MAP_THEMES[0];
 
-  // Shared props for PanelContent
   const panelProps: PanelProps = {
     worstColor, worstThreat, worst: worst ?? null, isCritical, isRealCurve, isLiveHour,
     hour, hourlyStations, top5, isPeakHour, activeLayer,
@@ -567,7 +565,6 @@ const Hotspots = () => {
         .user-dot { position:relative;width:20px;height:20px;background:#f97316;border:3px solid #fff;border-radius:50%;box-shadow:0 0 16px rgba(249,115,22,0.8);transform:translate(-2px,-2px); }
         .user-dot::before { content:'';position:absolute;top:-14px;left:-14px;right:-14px;bottom:-14px;border-radius:50%;border:2px solid rgba(249,115,22,0.5);animation:user-pulse 2s ease-out infinite; }
         @keyframes user-pulse { 0%{transform:scale(0.6);opacity:1} 100%{transform:scale(2.2);opacity:0} }
-        .scan-line { position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(249,115,22,0.35),transparent);animation:scan 3s linear infinite;pointer-events:none;z-index:998; }
         @keyframes scan { 0%{top:0;opacity:1} 90%{opacity:0.3} 100%{top:100%;opacity:0} }
         .hs-scroll::-webkit-scrollbar { width:6px; }
         .hs-scroll::-webkit-scrollbar-track { background:transparent; }
@@ -576,14 +573,13 @@ const Hotspots = () => {
         .blink { animation:blink 1.4s ease-in-out infinite; }
         input[type=range].timeline-slider { -webkit-appearance:none;appearance:none;height:6px;border-radius:99px;outline:none;cursor:pointer; }
         input[type=range].timeline-slider::-webkit-slider-thumb { -webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#f97316;border:2px solid #06080e;box-shadow:0 0 12px rgba(249,115,22,0.8);cursor:pointer; }
-        /* CSS-only responsive — no JS remounting */
         @media (max-width:767px) { .hs-desktop-panel { display:none!important; } }
         @media (min-width:768px) { .hs-mobile-toggle { display:none!important; } .hs-mobile-drawer { display:none!important; } }
       `}</style>
 
       <div style={{ flex:1, display:'flex', overflow:'hidden', position:'relative' }}>
 
-        {/* ── DESKTOP PANEL — always in DOM, hidden via CSS on mobile ── */}
+        {/* ── DESKTOP PANEL ── */}
         <div className="hs-scroll hs-desktop-panel"
           style={{ width:340, flexShrink:0, display:'flex', flexDirection:'column', overflowY:'auto', background:'rgba(6,8,14,0.98)', borderRight:'1px solid rgba(249,115,22,0.08)', boxShadow:'4px 0 40px rgba(0,0,0,0.8)', zIndex:10 }}>
           <PanelContent {...panelProps} />
@@ -591,7 +587,14 @@ const Hotspots = () => {
 
         {/* ── MAP ── */}
         <div style={{ flex:1, position:'relative', overflow:'hidden' }}>
-          <div className="scan-line" />
+
+          {/* Theme-aware scan line */}
+          <div style={{
+            position:'absolute', top:0, left:0, right:0, height:'2px',
+            background:`linear-gradient(90deg, transparent, ${scanLineColor}, transparent)`,
+            animation:'scan 3s linear infinite',
+            pointerEvents:'none', zIndex:998,
+          }} />
 
           <MapContainer center={userCoords} zoom={12} style={{ height:'100%', width:'100%', background:'#04060c' }} zoomControl={false}>
             <TileLayer key={activeTheme} url={currentTheme.url} attribution={currentTheme.attribution} opacity={0.85} />
@@ -705,7 +708,7 @@ const Hotspots = () => {
           </AnimatePresence>
         </div>
 
-        {/* ── MOBILE TOGGLE — CSS hidden on desktop ── */}
+        {/* ── MOBILE TOGGLE ── */}
         <button className="hs-mobile-toggle"
           onClick={() => setPanelOpen(o => !o)}
           style={{ position:'absolute', bottom: 230, left:16, zIndex:1001, display:'flex', alignItems:'center', gap:8, padding:'10px 16px', borderRadius:12, background:'rgba(6,8,14,0.95)', backdropFilter:'blur(16px)', border:`1px solid ${worstColor}40`, color:worstColor, cursor:'pointer', fontFamily:'IBM Plex Mono, monospace', fontSize:12, fontWeight:700, boxShadow:`0 4px 20px rgba(0,0,0,0.7)` }}>
@@ -714,7 +717,7 @@ const Hotspots = () => {
           {panelOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
 
-        {/* ── MOBILE DRAWER — CSS hidden on desktop ── */}
+        {/* ── MOBILE DRAWER ── */}
         <AnimatePresence>
           {panelOpen && (
             <motion.div className="hs-scroll hs-mobile-drawer"

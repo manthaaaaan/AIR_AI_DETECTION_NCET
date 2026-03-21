@@ -12,48 +12,66 @@ import { Clock, Search, X, ChevronUp, ChevronDown } from 'lucide-react';
 
 // ── Map Themes ─────────────────────────────────────────────────
 const MAP_THEMES = [
-  { id: 'dark',       label: 'Dark',        preview: '#0a0e14', url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                                                   attribution: '&copy; <a href="https://carto.com/">CARTO</a>' },
-  { id: 'voyager',    label: 'Google Maps', preview: '#e8f0d8', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',                                        attribution: '&copy; <a href="https://carto.com/">CARTO</a>' },
-  { id: 'light',      label: 'Light',       preview: '#f5f5f0', url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',                                                   attribution: '&copy; <a href="https://carto.com/">CARTO</a>' },
-  { id: 'satellite',  label: 'Satellite',   preview: '#1a2a1a', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',                    attribution: '&copy; <a href="https://www.esri.com/">Esri</a>' },
-  { id: 'terrain',    label: 'Terrain',     preview: '#c8d8a8', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',                   attribution: '&copy; <a href="https://www.esri.com/">Esri</a>' },
-  { id: 'watercolor', label: 'Watercolor',  preview: '#d4e8f0', url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',                                             attribution: 'Map tiles by <a href="http://stamen.com">Stamen Design</a>' },
-  { id: 'osm',        label: 'Street',      preview: '#f0e8d8', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',                                                               attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>' },
+  { id: 'dark',       label: 'Dark',        preview: '#0a0e14', isLight: false, url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                                                   attribution: '&copy; <a href="https://carto.com/">CARTO</a>' },
+  { id: 'voyager',    label: 'Google Maps', preview: '#e8f0d8', isLight: true,  url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',                                        attribution: '&copy; <a href="https://carto.com/">CARTO</a>' },
+  { id: 'light',      label: 'Light',       preview: '#f5f5f0', isLight: true,  url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',                                                   attribution: '&copy; <a href="https://carto.com/">CARTO</a>' },
+  { id: 'satellite',  label: 'Satellite',   preview: '#1a2a1a', isLight: false, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',                    attribution: '&copy; <a href="https://www.esri.com/">Esri</a>' },
+  { id: 'terrain',    label: 'Terrain',     preview: '#c8d8a8', isLight: true,  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',                   attribution: '&copy; <a href="https://www.esri.com/">Esri</a>' },
+  { id: 'watercolor', label: 'Watercolor',  preview: '#d4e8f0', isLight: true,  url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',                                             attribution: 'Map tiles by <a href="http://stamen.com">Stamen Design</a>' },
+  { id: 'osm',        label: 'Street',      preview: '#f0e8d8', isLight: true,  url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',                                                               attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>' },
 ];
 
-const createMarkerIcon = (aqi: number, name: string, isLive = false) => {
+// ── Theme-aware marker factory ─────────────────────────────────
+const createMarkerIcon = (aqi: number, name: string, isLive = false, isLight = false) => {
   const color = getAQIColor(aqi);
   const showLabel = !name.match(/^Zone\s*\d+$/i) && !name.match(/^s-/);
+
+  // Light themes: dark outline + stronger drop shadow so dots pop on pale maps
+  // Dark themes: current glowing style
+  const dotBorder   = isLight ? `3px solid rgba(0,0,0,0.75)` : `${isLive ? '2px' : '1px'} solid rgba(255,255,255,0.4)`;
+  const dotShadow   = isLight
+    ? `0 2px 8px rgba(0,0,0,0.55), 0 0 0 1.5px rgba(0,0,0,0.3)`
+    : `0 0 ${isLive ? 16 : 10}px ${color}88`;
+  const dotTextColor = isLight ? '#111' : 'white';
+  const labelBg     = isLight ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.8)';
+  const labelBorder = isLight ? `1px solid rgba(0,0,0,0.18)` : `1px solid ${color}88`;
+  const labelColor  = isLight ? '#111' : color;
+  const labelShadow = isLight ? '0 2px 6px rgba(0,0,0,0.22)' : 'none';
+
   return L.divIcon({
     className: 'custom-marker',
     html: `
       <div style="display:flex;flex-direction:column;align-items:center;">
         <div style="position:relative;width:${isLive ? 42 : 36}px;height:${isLive ? 42 : 36}px;display:flex;align-items:center;justify-content:center;">
-          <div style="position:absolute;inset:0;border-radius:50%;background:${color};opacity:0.25;animation:pulse 2s infinite;"></div>
-          ${isLive ? `<div style="position:absolute;inset:-4px;border-radius:50%;border:2px solid ${color};opacity:0.4;animation:pulse 2s infinite 0.5s;"></div>` : ''}
-          <div style="position:absolute;inset:2px;border-radius:50%;background:${color};box-shadow:0 0 ${isLive ? 16 : 10}px ${color}88;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:${isLive ? 13 : 11}px;font-family:monospace;border:${isLive ? '2px' : '1px'} solid rgba(255,255,255,0.4);z-index:2;">
+          <div style="position:absolute;inset:0;border-radius:50%;background:${color};opacity:${isLight ? 0.18 : 0.25};animation:pulse 2s infinite;"></div>
+          ${isLive ? `<div style="position:absolute;inset:-4px;border-radius:50%;border:2px solid ${color};opacity:${isLight ? 0.3 : 0.4};animation:pulse 2s infinite 0.5s;"></div>` : ''}
+          <div style="position:absolute;inset:2px;border-radius:50%;background:${color};box-shadow:${dotShadow};display:flex;align-items:center;justify-content:center;color:${dotTextColor};font-weight:bold;font-size:${isLive ? 13 : 11}px;font-family:monospace;border:${dotBorder};z-index:2;">
             ${aqi}
           </div>
         </div>
-        ${showLabel ? `<div style="margin-top:4px;background:rgba(0,0,0,0.8);border:1px solid ${color}88;border-radius:4px;padding:2px 7px;white-space:nowrap;font-size:11px;font-family:monospace;font-weight:600;color:${color};letter-spacing:0.04em;pointer-events:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;">${name}</div>` : ''}
+        ${showLabel ? `<div style="margin-top:4px;background:${labelBg};border:${labelBorder};border-radius:4px;padding:2px 7px;white-space:nowrap;font-size:11px;font-family:monospace;font-weight:600;color:${labelColor};letter-spacing:0.04em;pointer-events:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;box-shadow:${labelShadow};">${name}</div>` : ''}
       </div>
-      <style>@keyframes pulse{0%,100%{transform:scale(1);opacity:0.25}50%{transform:scale(1.9);opacity:0}}</style>
+      <style>@keyframes pulse{0%,100%{transform:scale(1);opacity:${isLight ? 0.18 : 0.25}}50%{transform:scale(1.9);opacity:0}}</style>
     `,
     iconSize: [isLive ? 42 : 36, showLabel ? (isLive ? 64 : 56) : (isLive ? 42 : 36)],
     iconAnchor: [isLive ? 21 : 18, isLive ? 21 : 18],
   });
 };
 
-const createUserIcon = () => L.divIcon({
+const createUserIcon = (isLight = false) => L.divIcon({
   className: 'user-marker',
-  html: `<div style="position:relative;width:24px;height:24px;"><div style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;opacity:0.25;animation:pulse 2s infinite;"></div><div style="position:absolute;inset:3px;border-radius:50%;background:#3b82f6;border:2px solid white;box-shadow:0 0 10px #3b82f688;"></div></div>`,
+  html: `<div style="position:relative;width:24px;height:24px;">
+    <div style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;opacity:0.25;animation:pulse 2s infinite;"></div>
+    <div style="position:absolute;inset:3px;border-radius:50%;background:#3b82f6;border:${isLight ? '2px solid rgba(0,0,0,0.6)' : '2px solid white'};box-shadow:${isLight ? '0 2px 8px rgba(0,0,0,0.4)' : '0 0 10px #3b82f688'};"></div>
+  </div>`,
   iconSize: [24, 24],
   iconAnchor: [12, 12],
 });
 
 const LOCAL_ZOOM_THRESHOLD = 8;
 
-const MapMarkers = () => {
+// ── MapMarkers now receives isLight ───────────────────────────
+const MapMarkers = ({ isLight }: { isLight: boolean }) => {
   const map = useMap();
   const { stations, setSelectedStation } = useAirQuality();
   const markersRef = useRef<{ marker: L.Marker; isRegional: boolean }[]>([]);
@@ -85,7 +103,7 @@ const MapMarkers = () => {
       const isRegional = !isLocal;
 
       const marker = L.marker([station.lat, station.lng], {
-        icon: createMarkerIcon(station.aqi, isLocal && !isCenter ? '' : station.name, isCenter),
+        icon: createMarkerIcon(station.aqi, isLocal && !isCenter ? '' : station.name, isCenter, isLight),
         zIndexOffset: isCenter ? 1000 : isLocal ? 500 : 0,
       })
         .addTo(map)
@@ -120,7 +138,7 @@ const MapMarkers = () => {
 
     setTimeout(() => applyZoomVisibility(map.getZoom()), 50);
     return () => { markersRef.current.forEach(({ marker }) => marker.remove()); };
-  }, [stations, map, setSelectedStation, applyZoomVisibility]);
+  }, [stations, map, setSelectedStation, applyZoomVisibility, isLight]);
 
   return null;
 };
@@ -146,16 +164,16 @@ const MapEvents = ({ onMapClick, userCoords }: { onMapClick: (lat: number, lng: 
   return null;
 };
 
-const UserLocationMarker = ({ coords }: { coords: [number, number] }) => {
+const UserLocationMarker = ({ coords, isLight }: { coords: [number, number]; isLight: boolean }) => {
   const map = useMap();
   const markerRef = useRef<L.Marker | null>(null);
   useEffect(() => {
     if (markerRef.current) markerRef.current.remove();
-    markerRef.current = L.marker(coords, { icon: createUserIcon(), zIndexOffset: 1000 })
+    markerRef.current = L.marker(coords, { icon: createUserIcon(isLight), zIndexOffset: 1000 })
       .addTo(map)
       .bindTooltip('You are here', { permanent: false, direction: 'top' });
     return () => { markerRef.current?.remove(); };
-  }, [coords, map]);
+  }, [coords, map, isLight]);
   return null;
 };
 
@@ -225,7 +243,7 @@ const Dashboard = () => {
   const [selectedState,    setSelectedState]    = useState('');
   const [locationSearch,   setLocationSearch]   = useState('');
   const [showSuggestions,  setShowSuggestions]  = useState(false);
-  const [activeTheme,      setActiveTheme]      = useState(MAP_THEMES[0]);
+  const [activeTheme,      setActiveTheme]      = useState(MAP_THEMES.find(t => t.id === 'terrain')!);
   // Mobile drawer states
   const [leftOpen,  setLeftOpen]  = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
@@ -239,6 +257,8 @@ const Dashboard = () => {
 
   const searchInputRef   = useRef<HTMLInputElement>(null);
   const searchWrapperRef = useRef<HTMLDivElement>(null);
+
+  const isLight = activeTheme.isLight;
 
   const filteredDistricts = useMemo(() => {
     if (!selectedState) return [];
@@ -376,8 +396,8 @@ const Dashboard = () => {
     <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} transition={{ duration:0.4 }}
       className="grid-bg"
       style={{
-        paddingTop: isMobile ? 52 : 64,   // account for navbar height
-        paddingBottom: isMobile ? 64 : 0, // account for mobile bottom nav
+        paddingTop: isMobile ? 52 : 64,
+        paddingBottom: isMobile ? 64 : 0,
         minHeight: '100vh',
       }}
     >
@@ -413,8 +433,8 @@ const Dashboard = () => {
             <TileLayer key={activeTheme.id} url={activeTheme.url} attribution={activeTheme.attribution}/>
             <MapFlyTo coords={viewCoords}/>
             <Circle center={userCoords} radius={10000} pathOptions={{ color:'#f59e0b',fillColor:'#f59e0b',fillOpacity:0.08,weight:1,dashArray:'4 4' }}/>
-            <MapMarkers/>
-            <UserLocationMarker coords={userCoords}/>
+            <MapMarkers isLight={isLight}/>
+            <UserLocationMarker coords={userCoords} isLight={isLight}/>
             <LocateMeButton coords={userCoords} onReset={() => { handleMapClick(userCoords[0],userCoords[1]); setViewCoords(userCoords); setSelectedState(''); setLocationSearch(''); setSelectedStation(null); }}/>
             <MapEvents onMapClick={handleMapClick} userCoords={userCoords}/>
           </MapContainer>
@@ -432,15 +452,12 @@ const Dashboard = () => {
 
           {/* ── Mobile floating buttons ── */}
           <div className="dash-mobile-btn" style={{ position:'absolute', bottom: 16, left: 16, zIndex:999, display:'flex', flexDirection:'column', gap:8 }}>
-            {/* AQI / left drawer toggle */}
             <button onClick={() => { setLeftOpen(o=>!o); setRightOpen(false); }}
               style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 14px', borderRadius:12, background:'rgba(6,8,14,0.95)', backdropFilter:'blur(16px)', border:`1px solid ${category.color}50`, color:category.color, cursor:'pointer', fontFamily:'IBM Plex Mono,monospace', fontSize:12, fontWeight:700, boxShadow:`0 4px 20px rgba(0,0,0,0.6), 0 0 14px ${category.color}20` }}>
               <span style={{ fontSize:18, fontWeight:800 }}>{activeAQI}</span>
               <span style={{ fontSize:10, opacity:0.8 }}>{category.label}</span>
               {leftOpen ? <ChevronDown size={13}/> : <ChevronUp size={13}/>}
             </button>
-
-            {/* Pollutants / right drawer toggle */}
             <button onClick={() => { setRightOpen(o=>!o); setLeftOpen(false); }}
               style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 14px', borderRadius:12, background:'rgba(6,8,14,0.95)', backdropFilter:'blur(16px)', border:'1px solid rgba(255,255,255,0.1)', color:'rgba(255,255,255,0.7)', cursor:'pointer', fontFamily:'IBM Plex Mono,monospace', fontSize:12, fontWeight:700, boxShadow:'0 4px 20px rgba(0,0,0,0.6)' }}>
               Pollutants
@@ -448,7 +465,7 @@ const Dashboard = () => {
             </button>
           </div>
 
-          {/* ── Mobile left drawer (AQI + search) ── */}
+          {/* ── Mobile left drawer ── */}
           <AnimatePresence>
             {isMobile && leftOpen && (
               <motion.div className="dash-left-drawer dash-drawer-scroll"
@@ -463,7 +480,7 @@ const Dashboard = () => {
             )}
           </AnimatePresence>
 
-          {/* ── Mobile right drawer (pollutants) ── */}
+          {/* ── Mobile right drawer ── */}
           <AnimatePresence>
             {isMobile && rightOpen && (
               <motion.div className="dash-right-drawer dash-drawer-scroll"
